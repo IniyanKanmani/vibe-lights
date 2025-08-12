@@ -7,4 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "dotenv>=0.9.9",
     "requests>=2.32.4",
+    "tinytuya>=1.17.3",
+    "websockets>=15.0.1",
 ]
