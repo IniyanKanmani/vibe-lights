@@ -1,12 +1,14 @@
+import asyncio
 import os
 from time import sleep
 
 from dotenv import load_dotenv
 
 from home_assistant_rest_api import HomeAssistantRestAPI
+from home_assistant_websocket import HomeAssistantWebSocket
 
 
-def main():
+async def main():
     load_dotenv()
     backend = os.getenv("BACKEND")
 
@@ -20,6 +22,30 @@ def main():
             ha_rest_api.turn_lights_off()
             sleep(0.5)
 
+    elif backend == "websocket":
+        ha_websocket = HomeAssistantWebSocket()
+        is_connected = await ha_websocket.connect()
+
+        if not is_connected:
+            print("Websocket: Auth Invalid")
+
+            return
+
+        await ha_websocket.fetch_light_actions()
+        await ha_websocket.fetch_all_lights()
+        asyncio.create_task(ha_websocket.listen_for_messages())
+
+        await ha_websocket.turn_on_lights()
+        await asyncio.sleep(2)
+
+        for _ in range(10):
+            await ha_websocket.set_light_color([255, 255, 255])
+            await asyncio.sleep(0.5)
+            await ha_websocket.turn_off_lights()
+            await asyncio.sleep(0.5)
+
+        await ha_websocket.close_socket()
+
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
