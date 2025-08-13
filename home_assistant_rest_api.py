@@ -9,7 +9,7 @@ class HomeAssistantRestAPI:
         self.base_url = f"http://{os.getenv("HOMEASSISTANT_SERVER_IP")}:{os.getenv("HOMEASSISTANT_SERVER_PORT")}/api"
         self.headers = {
             "Authorization": f"Bearer {os.getenv("HOMEASSISTANT_API_KEY")}",
-            "content-type": "application/json"
+            "content-type": "application/json",
         }
 
     def fetch_all_lights(self):
@@ -22,20 +22,15 @@ class HomeAssistantRestAPI:
         self.lights = list(states)
 
     def control_lights(self, color):
-        data = {
-            "entity_id": self.lights,
-            "rgb_color": color
-        }
+        data = {"entity_id": self.lights, "rgb_color": color}
 
-        post(f"{self.base_url}/services/light/turn_on",
-             json=data,
-             headers=self.headers)
+        post(f"{self.base_url}/services/light/turn_on", json=data, headers=self.headers)
 
     def turn_lights_off(self):
         data = {
             "entity_id": self.lights,
         }
 
-        post(f"{self.base_url}/services/light/turn_off",
-             json=data,
-             headers=self.headers)
+        post(
+            f"{self.base_url}/services/light/turn_off", json=data, headers=self.headers
+        )

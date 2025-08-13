@@ -129,7 +129,7 @@ wheels = [
 ]
 
 [[package]]
-name = "music-assistant"
+name = "vibe-lights"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
