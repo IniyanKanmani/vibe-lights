@@ -1,1 +1,1 @@
-# Music Assistant
+# Vibe Lights
