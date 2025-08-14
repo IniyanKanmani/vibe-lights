@@ -1,5 +1,6 @@
 import sounddevice as sd
 
+
 class BasicAudioManager:
     def define_io_devices(self):
         print(sd.query_devices())
@@ -46,8 +47,30 @@ class BasicAudioManager:
             print("No Output Channel Available")
             return
 
-        self.channel_in = 1
-        self.channel_out = 1
+        channel_in = input(f"Number of channels to record on (Max {self.channel_in}): ")
+        channel_out = input(f"Number of channels to play on (Max {self.channel_out}): ")
+
+        try:
+            channel_in = int(channel_in)
+            if channel_in <= self.channel_in:
+                self.channel_in = channel_in
+            else:
+                print("Invalid number of input channels")
+                return
+        except ValueError:
+            print("Invalid number of input channels")
+            return
+
+        try:
+            channel_out = int(channel_out)
+            if channel_out <= self.channel_out:
+                self.channel_out = channel_out
+            else:
+                print("Invalid number of output channels")
+                return
+        except ValueError:
+            print("Invalid number of output channels")
+            return
 
         self.duration = 10
 
@@ -72,5 +95,3 @@ class BasicAudioManager:
         print("Playing")
         sd.play(self.recording, samplerate=self.fs_out, blocking=True)
         print("Completed")
-
-

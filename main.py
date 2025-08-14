@@ -4,9 +4,10 @@ from time import sleep
 
 from dotenv import load_dotenv
 
+from basic_audio_manager import BasicAudioManager
 from home_assistant_rest_api import HomeAssistantRestAPI
 from home_assistant_websocket import HomeAssistantWebSocket
-from basic_audio_manager import BasicAudioManager
+from input_stream_audio_manager import InputStreamAudioManager
 
 
 async def main():
@@ -48,7 +49,7 @@ async def main():
         await ha_websocket.close_socket()
 
 
-def sub_main():
+def basic_audio_main():
     audio_manager = BasicAudioManager()
     audio_manager.define_io_devices()
 
@@ -57,6 +58,21 @@ def sub_main():
     audio_manager.play_audio()
 
 
+def input_stream_main():
+    in_audio_manager = InputStreamAudioManager()
+    in_audio_manager.initialize_device()
+
+    in_audio_manager.build_stream(
+        ms=200,
+        latency=None,
+    )
+
+    in_audio_manager.stream.start()
+    while True:
+        pass
+
+
 if __name__ == "__main__":
     # asyncio.run(main())
-    sub_main()
+    # basic_audio_main()
+    input_stream_main()
