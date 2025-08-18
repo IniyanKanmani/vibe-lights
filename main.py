@@ -1,18 +1,24 @@
 import asyncio
 import os
+import queue
+import threading
 from time import sleep
+from typing import List
 
 from dotenv import load_dotenv
 
-from basic_audio_manager import BasicAudioManager
+from audio_input_stream_manager import AudioInputStreamManager
 from home_assistant_rest_api import HomeAssistantRestAPI
 from home_assistant_websocket import HomeAssistantWebSocket
-from input_stream_audio_manager import InputStreamAudioManager
+from websocket_queue_loop import WebsocketQueueLoop
 
 
 async def main():
     load_dotenv()
-    backend = os.getenv("BACKEND")
+    backend = str(os.getenv("BACKEND")).lower()
+
+    audio_manager = AudioInputStreamManager()
+    audio_manager.initialize_input_device()
 
     if backend == "restapi":
         ha_rest_api = HomeAssistantRestAPI()
@@ -33,46 +39,45 @@ async def main():
 
             return
 
+        await ha_websocket.fetch_light_states()
         await ha_websocket.fetch_light_actions()
-        await ha_websocket.fetch_all_lights()
-        asyncio.create_task(ha_websocket.listen_for_messages())
 
-        await ha_websocket.turn_on_lights()
+        asyncio.create_task(ha_websocket.listen())
+
+        await ha_websocket.send_light_state(255, [255, 255, 255])
         await asyncio.sleep(2)
 
-        for _ in range(10):
-            await ha_websocket.set_light_color([255, 255, 255])
-            await asyncio.sleep(0.5)
-            await ha_websocket.turn_off_lights()
-            await asyncio.sleep(0.5)
+        # for _ in range(10):
+        #     await ha_websocket.send_light_state(255, [255, 255, 255])
+        #     await asyncio.sleep(0.5)
+        #     await ha_websocket.send_light_state(0, [255, 255, 255])
+        #     await asyncio.sleep(0.5)
 
-        await ha_websocket.close_socket()
+        color_data_queue = queue.Queue()
 
+        websocket_queue_loop = WebsocketQueueLoop(color_data_queue, ha_websocket)
+        websocket_queue_loop.initialize_loop()
 
-def basic_audio_main():
-    audio_manager = BasicAudioManager()
-    audio_manager.define_io_devices()
+        threading.Thread(target=websocket_queue_loop.push_states).start()
 
-    audio_manager.record_audio()
-    sleep(1)
-    audio_manager.play_audio()
+        def callback(br: int, cl: List[int]) -> None:
+            color_data_queue.put_nowait((br, cl))
 
+        def finished_callback() -> None:
+            asyncio.create_task(ha_websocket.close_socket())
 
-def input_stream_main():
-    in_audio_manager = InputStreamAudioManager()
-    in_audio_manager.initialize_device()
+        audio_manager.build_stream(
+            ms=500,
+            latency=None,
+            callback=callback,
+            finished_callback=finished_callback,
+        )
 
-    in_audio_manager.build_stream(
-        ms=200,
-        latency=None,
-    )
+    audio_manager.stream.start()
 
-    in_audio_manager.stream.start()
     while True:
         pass
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
-    # basic_audio_main()
-    input_stream_main()
+    asyncio.run(main())

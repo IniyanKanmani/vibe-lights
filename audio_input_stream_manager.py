@@ -1,13 +1,13 @@
+from typing import Callable, Tuple
+
 import numpy as np
 import sounddevice as sd
 
+from utils import clamp
 
-class InputStreamAudioManager:
-    def __init__(self):
-        self.count = 0
-        self.data = np.array([[]])
 
-    def initialize_device(self):
+class AudioInputStreamManager:
+    def initialize_input_device(self) -> None:
         device_list = sd.query_devices()
         print(device_list, end="\n\n")
 
@@ -23,7 +23,7 @@ class InputStreamAudioManager:
 
         print()
 
-        device_details = sd.query_devices(self.input_device)
+        device_details = dict(sd.query_devices(self.input_device))
         print("Input Device: ", device_details)
 
         print()
@@ -59,31 +59,41 @@ class InputStreamAudioManager:
 
     def build_stream(
         self,
-        ms=100,
-        latency=None,
-    ):
-        blocksize = int(self.samplerate * ms / 1000)
+        ms: float = 100,
+        latency: float | None = None,
+        callback: Callable | None = None,
+        finished_callback: Callable | None = None,
+    ) -> None:
         self.stream = sd.InputStream(
             samplerate=self.samplerate,
-            blocksize=blocksize,
+            blocksize=1024,
             device=self.input_device,
             channels=self.channels,
             dtype="float32",
             latency=latency,
-            callback=self.callback,
-            finished_callback=self.finished_callback,
+            callback=self.listen,
+            finished_callback=self.finish,
             clip_off=None,
             dither_off=None,
             never_drop_input=None,
             prime_output_buffers_using_stream_callback=None,
         )
 
+        blocksize = self.stream.blocksize
+        print(f"Block Size: {blocksize}")
+
         self.freqs = np.fft.rfftfreq(blocksize, 1.0 / self.samplerate)
         self.bands = {
-            "low": self.find_lower_and_upper_freqs(20, 250),
-            "mid": self.find_lower_and_upper_freqs(250, 4000),
-            "high": self.find_lower_and_upper_freqs(4000, 12000),
+            "low": self.__find_lower_and_upper_freqs(20, 250),
+            "mid": self.__find_lower_and_upper_freqs(250, 4000),
+            "high": self.__find_lower_and_upper_freqs(4000, 12000),
         }
+
+        self.callback = callback
+        self.finished_callback = finished_callback
+
+        self.data = []
+        self.samples_to_average = int((ms * self.samplerate) / (blocksize * 1000))
 
         print()
         print(f"Block Size: {blocksize}")
@@ -91,15 +101,16 @@ class InputStreamAudioManager:
         print(f"Freqs Interval: {self.freqs[1]}")
         print(f"Freqs Max: {self.freqs[-1]}")
         print(f"Bands Freqs: {self.bands}")
+        print(f"Samples Number: {self.samples_to_average}")
         print()
 
-    def find_lower_and_upper_freqs(self, ll, hl):
+    def __find_lower_and_upper_freqs(self, ll: int, hl: int) -> Tuple[int, int]:
         li = list(map(lambda x: x > ll, self.freqs)).index(True) - 1
         ri = list(map(lambda x: x < hl, self.freqs)).index(False) + 1
 
         return li, ri
 
-    def callback(self, indata, frames, time, status):
+    def listen(self, indata: np.ndarray, frames: int, *_) -> None:
         window = np.hanning(frames)[:, None]
         magnitude = np.abs(np.fft.rfft(indata * window, axis=0))
 
@@ -109,29 +120,37 @@ class InputStreamAudioManager:
 
         low_band_avg = np.average(low_bands)
         low_band_max = np.max(low_bands)
-        r = np.uint8(
+        r = int(
             (low_band_max if low_band_max / 2 > low_band_avg else low_band_avg) * 255
         )
 
         mid_band_avg = np.average(mid_bands)
         mid_band_max = np.max(mid_bands)
-        g = np.uint8(
+        g = int(
             (mid_band_max if mid_band_max / 2 > mid_band_avg else mid_band_avg) * 255
         )
 
         high_band_avg = np.average(high_bands)
         high_band_max = np.max(high_bands)
-        b = np.uint8(
+        b = int(
             (high_band_max if high_band_max / 2 > high_band_avg else high_band_avg)
             * 255
         )
 
-        brightness = int((max(r, g, b) / 255) * 100)
+        br = clamp(0, max(r, g, b), 255)
 
-        print(f"R: {r}, G: {g}, B: {b}, Br: {brightness}")
+        if len(self.data) < self.samples_to_average - 1:
+            self.data.append([br, r, g, b])
+        else:
+            br, r, g, b = np.array(np.average(self.data, axis=0), dtype=np.uint8)
+            if self.callback:
+                self.callback(int(br), [int(r), int(g), int(b)])
+            self.data.clear()
 
-        self.count += 1
+    def finish(self) -> None:
+        if self.finished_callback:
+            self.finished_callback()
+        self.close()
 
-    def finished_callback(self):
-        print(self.count)
-        print("Stream Completed")
+    def close(self) -> None:
+        self.stream.close()
