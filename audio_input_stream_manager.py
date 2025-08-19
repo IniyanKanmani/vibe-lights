@@ -71,8 +71,8 @@ class AudioInputStreamManager:
             channels=self.channels,
             dtype="float32",
             latency=latency,
-            callback=self.listen,
-            finished_callback=self.finish,
+            callback=self.__listen,
+            finished_callback=self.__finish,
             clip_off=None,
             dither_off=None,
             never_drop_input=None,
@@ -110,7 +110,10 @@ class AudioInputStreamManager:
 
         return li, ri
 
-    def listen(self, indata: np.ndarray, frames: int, *_) -> None:
+    def start(self):
+        self.stream.start()
+
+    def __listen(self, indata: np.ndarray, frames: int, *_) -> None:
         window = np.hanning(frames)[:, None]
         magnitude = np.abs(np.fft.rfft(indata * window, axis=0))
 
@@ -147,7 +150,7 @@ class AudioInputStreamManager:
                 self.callback(int(br), [int(r), int(g), int(b)])
             self.data.clear()
 
-    def finish(self) -> None:
+    def __finish(self) -> None:
         if self.finished_callback:
             self.finished_callback()
         self.close()

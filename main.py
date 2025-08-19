@@ -1,6 +1,8 @@
 import asyncio
 import os
 import queue
+import signal
+import sys
 import threading
 from time import sleep
 from typing import List
@@ -32,9 +34,9 @@ async def main():
 
     elif backend == "websocket":
         ha_websocket = HomeAssistantWebSocket()
-        is_connected = await ha_websocket.connect()
+        await ha_websocket.connect()
 
-        if not is_connected:
+        if not ha_websocket.is_connected():
             print("Websocket: Auth Invalid")
 
             return
@@ -44,8 +46,8 @@ async def main():
 
         asyncio.create_task(ha_websocket.listen())
 
-        await ha_websocket.send_light_state(255, [255, 255, 255])
-        await asyncio.sleep(2)
+        # await ha_websocket.send_light_state(255, [255, 255, 255])
+        # await asyncio.sleep(2)
 
         # for _ in range(10):
         #     await ha_websocket.send_light_state(255, [255, 255, 255])
@@ -53,18 +55,21 @@ async def main():
         #     await ha_websocket.send_light_state(0, [255, 255, 255])
         #     await asyncio.sleep(0.5)
 
-        color_data_queue = queue.Queue()
+        light_data_queue = queue.Queue()
 
-        websocket_queue_loop = WebsocketQueueLoop(color_data_queue, ha_websocket)
+        websocket_queue_loop = WebsocketQueueLoop(light_data_queue, ha_websocket)
         websocket_queue_loop.initialize_loop()
 
         threading.Thread(target=websocket_queue_loop.push_states).start()
 
         def callback(br: int, cl: List[int]) -> None:
-            color_data_queue.put_nowait((br, cl))
+            light_data_queue.put_nowait((br, cl))
 
         def finished_callback() -> None:
-            asyncio.create_task(ha_websocket.close_socket())
+            task = asyncio.create_task(ha_websocket.recover_initial_state())
+            task.add_done_callback(
+                lambda _: asyncio.create_task(ha_websocket.close_socket())
+            )
 
         audio_manager.build_stream(
             ms=500,
@@ -73,10 +78,13 @@ async def main():
             finished_callback=finished_callback,
         )
 
-    audio_manager.stream.start()
+        def sigint_handler(*_):
+            audio_manager.close()
+            sys.exit(0)
 
-    while True:
-        pass
+        signal.signal(signal.SIGINT, sigint_handler)
+
+    audio_manager.start()
 
 
 if __name__ == "__main__":
