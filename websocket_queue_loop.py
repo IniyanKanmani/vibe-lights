@@ -7,9 +7,9 @@ from home_assistant_websocket import HomeAssistantWebSocket
 
 class WebsocketQueueLoop:
     def __init__(
-        self, color_data_queue: queue.Queue, ha_websocket: HomeAssistantWebSocket
+        self, light_data_queue: queue.Queue, ha_websocket: HomeAssistantWebSocket
     ):
-        self.color_data_queue = color_data_queue
+        self.light_data_queue = light_data_queue
         self.ha_websocket = ha_websocket
 
     def initialize_loop(self):
@@ -22,7 +22,7 @@ class WebsocketQueueLoop:
 
     def push_states(self):
         while True:
-            br, cl = self.color_data_queue.get()
+            br, cl = self.light_data_queue.get()
 
             self.loop.call_soon_threadsafe(
                 asyncio.create_task, self.ha_websocket.send_light_state(br, cl)
