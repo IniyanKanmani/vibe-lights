@@ -1,9 +1,6 @@
 import asyncio
+import multiprocessing
 import os
-import queue
-import signal
-import sys
-import threading
 from time import sleep
 from typing import List
 
@@ -11,8 +8,7 @@ from dotenv import load_dotenv
 
 from audio_input_stream_manager import AudioInputStreamManager
 from home_assistant_rest_api import HomeAssistantRestAPI
-from home_assistant_websocket import HomeAssistantWebSocket
-from websocket_queue_loop import WebsocketQueueLoop
+from home_assistant_websocket_process import HomeAssistantWebSocketProcess
 
 
 async def main():
@@ -33,43 +29,18 @@ async def main():
             sleep(0.5)
 
     elif backend == "websocket":
-        ha_websocket = HomeAssistantWebSocket()
-        await ha_websocket.connect()
+        process_queue = multiprocessing.Queue()
+        ser_con, cli_con = multiprocessing.Pipe()
 
-        if not ha_websocket.is_connected():
-            print("Websocket: Auth Invalid")
-
-            return
-
-        await ha_websocket.fetch_light_states()
-        await ha_websocket.fetch_light_actions()
-
-        asyncio.create_task(ha_websocket.listen())
-
-        # await ha_websocket.send_light_state(255, [255, 255, 255])
-        # await asyncio.sleep(2)
-
-        # for _ in range(10):
-        #     await ha_websocket.send_light_state(255, [255, 255, 255])
-        #     await asyncio.sleep(0.5)
-        #     await ha_websocket.send_light_state(0, [255, 255, 255])
-        #     await asyncio.sleep(0.5)
-
-        light_data_queue = queue.Queue()
-
-        websocket_queue_loop = WebsocketQueueLoop(light_data_queue, ha_websocket)
-        websocket_queue_loop.initialize_loop()
-
-        threading.Thread(target=websocket_queue_loop.push_states).start()
+        ha_websocket_process = HomeAssistantWebSocketProcess(cli_con, process_queue)
+        ha_websocket_process.start()
 
         def callback(br: int, cl: List[int]) -> None:
-            light_data_queue.put_nowait((br, cl))
+            process_queue.put_nowait((br, cl))
 
         def finished_callback() -> None:
-            task = asyncio.create_task(ha_websocket.recover_initial_state())
-            task.add_done_callback(
-                lambda _: asyncio.create_task(ha_websocket.close_socket())
-            )
+            ser_con.send("kill")
+            audio_manager.close()
 
         audio_manager.build_stream(
             ms=500,
@@ -78,14 +49,12 @@ async def main():
             finished_callback=finished_callback,
         )
 
-        def sigint_handler(*_):
-            audio_manager.close()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, sigint_handler)
-
+    sleep(2)
     audio_manager.start()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Exiting...")
