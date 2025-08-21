@@ -153,7 +153,6 @@ class AudioInputStreamManager:
     def __finish(self) -> None:
         if self.finished_callback:
             self.finished_callback()
-        self.close()
 
     def close(self) -> None:
         self.stream.close()
