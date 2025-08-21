@@ -66,10 +66,10 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
             self.__connection_status = False
 
     def __store_initial_light_states(self, states: List[dict]) -> None:
-        self.__initial_light_states = {}
+        initial_light_states = {}
 
         for state in states:
-            self.__initial_light_states[state["entity_id"]] = {
+            initial_light_states[state["entity_id"]] = {
                 "state": state["state"],
                 "attributes": {
                     "effect": state["attributes"]["effect"],
@@ -87,6 +87,10 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
                     "raw_color_temp": state["attributes"]["raw_color_temp"],
                 },
             }
+
+        self.__initial_light_states = initial_light_states
+
+        print(initial_light_states)
 
     async def __fetch_light_states(self) -> None:
         await self.__ha_socket.send(dumps({"id": self.__id, "type": "get_states"}))
@@ -186,6 +190,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
                 print("Queue Empty")
             finally:
                 if not self.__connection_status:
+                    print("Queue Closed")
                     break
 
     async def __close_socket(self) -> None:
