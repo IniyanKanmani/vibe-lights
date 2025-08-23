@@ -9,60 +9,68 @@ from typing import List
 from dotenv import load_dotenv
 
 from audio_input_stream_manager import AudioInputStreamManager
-from home_assistant_rest_api import HomeAssistantRestAPI
+from home_assistant_rest_api_process import HomeAssistantRestAPIProcess
 from home_assistant_websocket_process import HomeAssistantWebSocketProcess
 
 
-async def main():
+async def main() -> None:
     load_dotenv()
     backend = str(os.getenv("BACKEND")).lower()
-
-    audio_manager = AudioInputStreamManager()
-    audio_manager.initialize_input_device()
 
     ser_con, cli_con = multiprocessing.Pipe()
     process_queue = multiprocessing.Queue()
 
-    if backend == "restapi":
-        ha_rest_api = HomeAssistantRestAPI()
-        ha_rest_api.fetch_all_lights()
+    backend_process = None
 
-        for _ in range(10):
-            ha_rest_api.control_lights([255, 255, 255])
-            sleep(0.5)
-            ha_rest_api.turn_lights_off()
-            sleep(0.5)
+    audio_manager = AudioInputStreamManager()
+    audio_manager.initialize_input_device()
+
+    if backend == "restapi":
+        backend_process = HomeAssistantRestAPIProcess(cli_con, process_queue)
 
     elif backend == "websocket":
-        ha_websocket_process = HomeAssistantWebSocketProcess(cli_con, process_queue)
-        ha_websocket_process.start()
+        backend_process = HomeAssistantWebSocketProcess(cli_con, process_queue)
 
-        def callback(br: int, cl: List[int]) -> None:
-            process_queue.put_nowait((br, cl))
+    else:
+        print("Invalid Backend")
+        exit(1)
 
-        def finished_callback() -> None:
-            ser_con.send("kill")
+    def callback(br: int, cl: List[int]) -> None:
+        process_queue.put_nowait((br, cl))
 
-        def cleanup(audio_manager, ha_websocket_process):
-            if audio_manager:
-                audio_manager.close()
-            if ha_websocket_process:
-                ha_websocket_process.join()
+    def finished_callback() -> None:
+        ser_con.send("kill")
 
-        def signal_handler(*_):
-            cleanup(audio_manager, ha_websocket_process)
+    audio_manager.build_stream(
+        ms=500,
+        latency=None,
+        callback=callback,
+        finished_callback=finished_callback,
+    )
 
-        signal.signal(signal.SIGINT, signal_handler)
-
-        audio_manager.build_stream(
-            ms=500,
-            latency=None,
-            callback=callback,
-            finished_callback=finished_callback,
-        )
-
+    backend_process.start()
     sleep(2)
     threading.Thread(target=audio_manager.start, daemon=True).start()
+
+    setup_cleanup(audio_manager, backend_process)
+
+
+def setup_cleanup(
+    audio_manager: AudioInputStreamManager, backend_process: multiprocessing.Process
+) -> None:
+    def cleanup(
+        audio_manager: AudioInputStreamManager,
+        ha_websocket_process: multiprocessing.Process,
+    ) -> None:
+        if audio_manager:
+            audio_manager.close()
+        if ha_websocket_process:
+            ha_websocket_process.join()
+
+    def signal_handler(*_) -> None:
+        cleanup(audio_manager, backend_process)
+
+    signal.signal(signal.SIGINT, signal_handler)
 
 
 if __name__ == "__main__":
