@@ -11,25 +11,27 @@ from dotenv import load_dotenv
 from audio_input_stream_manager import AudioInputStreamManager
 from home_assistant_rest_api_process import HomeAssistantRestAPIProcess
 from home_assistant_websocket_process import HomeAssistantWebSocketProcess
+from local_tuya_process import LocalTuyaProcess
 
 
 async def main() -> None:
     load_dotenv()
     backend = str(os.getenv("BACKEND")).lower()
 
-    ser_con, cli_con = multiprocessing.Pipe()
-    process_queue = multiprocessing.Queue()
-
+    audio_manager = AudioInputStreamManager()
     backend_process = None
 
-    audio_manager = AudioInputStreamManager()
-    audio_manager.initialize_input_device()
+    ser_con, cli_con = multiprocessing.Pipe()
+    process_queue = multiprocessing.Queue()
 
     if backend == "restapi":
         backend_process = HomeAssistantRestAPIProcess(cli_con, process_queue)
 
     elif backend == "websocket":
         backend_process = HomeAssistantWebSocketProcess(cli_con, process_queue)
+
+    elif backend == "local_tuya":
+        backend_process = LocalTuyaProcess(cli_con, process_queue)
 
     else:
         print("Invalid Backend")
@@ -41,6 +43,7 @@ async def main() -> None:
     def finished_callback() -> None:
         ser_con.send("kill")
 
+    audio_manager.initialize_input_device()
     audio_manager.build_stream(
         ms=500,
         latency=None,
@@ -48,11 +51,14 @@ async def main() -> None:
         finished_callback=finished_callback,
     )
 
-    backend_process.start()
-    sleep(2)
-    threading.Thread(target=audio_manager.start, daemon=True).start()
-
     setup_cleanup(audio_manager, backend_process)
+
+    backend_process.start()
+
+    if ser_con.recv() == "ready":
+        print("Ready Signal Received")
+        sleep(2)
+        threading.Thread(target=audio_manager.start, daemon=True).start()
 
 
 def setup_cleanup(
@@ -60,12 +66,12 @@ def setup_cleanup(
 ) -> None:
     def cleanup(
         audio_manager: AudioInputStreamManager,
-        ha_websocket_process: multiprocessing.Process,
+        backend_process: multiprocessing.Process,
     ) -> None:
         if audio_manager:
             audio_manager.close()
-        if ha_websocket_process:
-            ha_websocket_process.join()
+        if backend_process:
+            backend_process.join()
 
     def signal_handler(*_) -> None:
         cleanup(audio_manager, backend_process)

@@ -1,4 +1,9 @@
-.venv
-.mypy_cache
-__pycache__
+__pycache__/
+.venv/
+
 .env
+
+devices.json
+snapshot.json
+tinytuya.json
+tuya-raw.json
