@@ -3,3 +3,8 @@
 __pycache__/
 
 .env
+
+devices.json
+snapshot.json
+tinytuya.json
+tuya-raw.json
