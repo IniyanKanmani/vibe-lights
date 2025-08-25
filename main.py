@@ -19,23 +19,23 @@ async def main() -> None:
     backend = str(os.getenv("BACKEND")).lower()
 
     audio_manager = AudioInputStreamManager()
+    audio_manager_thread = None
     backend_process = None
 
     ser_con, cli_con = multiprocessing.Pipe()
     process_queue = multiprocessing.Queue()
 
-    if backend == "restapi":
+    if backend == "rest_api":
         backend_process = HomeAssistantRestAPIProcess(cli_con, process_queue)
 
-    elif backend == "websocket":
+    elif backend == "web_socket":
         backend_process = HomeAssistantWebSocketProcess(cli_con, process_queue)
 
-    elif backend == "local_tuya":
+    elif backend == "tuya_local":
         backend_process = LocalTuyaProcess(cli_con, process_queue)
 
     else:
-        print("Invalid Backend")
-        exit(1)
+        raise Exception("Invalid Backend")
 
     def callback(br: int, cl: List[int]) -> None:
         process_queue.put_nowait((br, cl))
@@ -51,32 +51,30 @@ async def main() -> None:
         finished_callback=finished_callback,
     )
 
-    setup_cleanup(audio_manager, backend_process)
+    setup_cleanup(audio_manager, audio_manager_thread)
 
     backend_process.start()
 
     if ser_con.recv() == "ready":
-        print("Ready Signal Received")
+        print("Ready Signal Received", end="\n\n")
         sleep(2)
-        threading.Thread(target=audio_manager.start, daemon=True).start()
+
+        audio_manager_thread = threading.Thread(target=audio_manager.start, daemon=True)
+        audio_manager_thread.start()
 
 
 def setup_cleanup(
-    audio_manager: AudioInputStreamManager, backend_process: multiprocessing.Process
+    audio_manager: AudioInputStreamManager,
+    audio_manager_thread: threading.Thread | None,
 ) -> None:
-    def cleanup(
-        audio_manager: AudioInputStreamManager,
-        backend_process: multiprocessing.Process,
-    ) -> None:
-        if audio_manager:
+    def cleanup_handler(*_) -> None:
+        if audio_manager and audio_manager.stream.active:
             audio_manager.close()
-        if backend_process:
-            backend_process.join()
 
-    def signal_handler(*_) -> None:
-        cleanup(audio_manager, backend_process)
+        if audio_manager_thread and audio_manager_thread.is_alive():
+            audio_manager_thread.join()
 
-    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGINT, cleanup_handler)
 
 
 if __name__ == "__main__":
