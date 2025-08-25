@@ -12,11 +12,11 @@ import websockets
 
 class HomeAssistantWebSocketProcess(multiprocessing.Process):
     def __init__(
-        self, process_con: Connection, process_queue: multiprocessing.Queue
+        self, process_connection: Connection, process_queue: multiprocessing.Queue
     ) -> None:
         super().__init__()
 
-        self.__process_con = process_con
+        self.__process_connection = process_connection
         self.__process_queue = process_queue
 
         self.__base_url = f"ws://{os.getenv("HOMEASSISTANT_SERVER_IP")}:{os.getenv("HOMEASSISTANT_SERVER_PORT")}/api/websocket"
@@ -33,19 +33,13 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         asyncio.set_event_loop(self.__loop)
         self.__loop.run_forever()
 
-    def __is_connected(self) -> bool:
-        return self.__connection_status
-
     async def __connect(self) -> None:
         self.__ha_socket = await websockets.connect(self.__base_url)
 
         try:
             message = loads(await self.__ha_socket.recv())
         except Exception:
-            self.__connection_status = False
-            print("Connection Timeout")
-
-            return
+            raise Exception("Connection Timeout")
 
         if message["type"] == "auth_required":
             await self.__ha_socket.send(
@@ -55,10 +49,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         try:
             message = loads(await self.__ha_socket.recv())
         except Exception:
-            self.__connection_status = False
-            print("Connection Timeout")
-
-            return
+            raise Exception("Connection Timeout")
 
         if message["type"] == "auth_ok":
             self.__connection_status = True
@@ -90,8 +81,6 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
         self.__initial_light_states = initial_light_states
 
-        print(initial_light_states)
-
     async def __fetch_light_states(self) -> None:
         await self.__ha_socket.send(dumps({"id": self.__id, "type": "get_states"}))
         self.__id += 1
@@ -101,23 +90,17 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
             filter(lambda x: str(x["entity_id"]).startswith("light"), message)
         )
 
-        # with open("states.json", "w") as f:
-        #     f.write(dumps(list(states)))
-
         self.__store_initial_light_states(states)
         self.__lights = list(map(lambda x: x["entity_id"], states))
 
         print(self.__lights, end="\n\n")
 
-    async def __fetch_light_actions(self) -> None:
-        await self.__ha_socket.send(dumps({"id": self.__id, "type": "get_services"}))
-        self.__id += 1
-
-        actions = loads(await self.__ha_socket.recv())["result"]
-        actions = {"light": actions["light"]}
-
-        # with open("actions.json", "w") as f:
-        #     f.write(dumps(actions))
+    # async def __fetch_light_actions(self) -> None:
+    #     await self.__ha_socket.send(dumps({"id": self.__id, "type": "get_services"}))
+    #     self.__id += 1
+    #
+    #     actions = loads(await self.__ha_socket.recv())["result"]
+    #     actions = {"light": actions["light"]}
 
     # async def __listen(self) -> None:
     #     async for event in self.__ha_socket:
@@ -138,6 +121,22 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         self.__id += 1
 
         await self.__ha_socket.send(data)
+
+    def __push_states(self) -> None:
+        while True:
+            try:
+                br, cl = self.__process_queue.get(timeout=3)
+                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+
+                self.__loop.call_soon_threadsafe(
+                    asyncio.create_task, self.__send_light_state(br, cl)
+                )
+            except queue.Empty:
+                print("Queue Empty")
+            finally:
+                if not self.__connection_status:
+                    print("Queue Closed")
+                    break
 
     async def __recover_initial_state(self) -> None:
         messages = []
@@ -177,31 +176,18 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
         print("Initial State Restored")
 
-    def __push_states(self) -> None:
-        while True:
-            try:
-                br, cl = self.__process_queue.get(timeout=3)
-                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
-
-                self.__loop.call_soon_threadsafe(
-                    asyncio.create_task, self.__send_light_state(br, cl)
-                )
-            except queue.Empty:
-                print("Queue Empty")
-            finally:
-                if not self.__connection_status:
-                    print("Queue Closed")
-                    break
-
     async def __close_socket(self) -> None:
         await self.__ha_socket.close()
         self.__connection_status = False
 
-        print("Web Socket Closed")
+        print("Web Socket Connection Closed")
+
+    def __send_ready_signal(self) -> None:
+        self.__process_connection.send("ready")
 
     def __process_connection_listener(self):
         while True:
-            message = self.__process_con.recv()
+            message = self.__process_connection.recv()
 
             if message == "kill":
                 self.kill()
@@ -211,25 +197,23 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
     def run(self) -> None:
         self.__initialize_loop()
-
         asyncio.run_coroutine_threadsafe(self.__connect(), self.__loop).result()
 
-        if not self.__is_connected():
-            print("Websocket: Auth Invalid")
-
-            return
+        if not self.__connection_status:
+            raise Exception("Websocket: Auth Invalid")
 
         asyncio.run_coroutine_threadsafe(
             self.__fetch_light_states(), self.__loop
         ).result()
-        asyncio.run_coroutine_threadsafe(
-            self.__fetch_light_actions(), self.__loop
-        ).result()
+        # asyncio.run_coroutine_threadsafe(
+        #     self.__fetch_light_actions(), self.__loop
+        # ).result()
 
         threading.Thread(target=self.__process_connection_listener, daemon=True).start()
 
         # self.__listener_task = self.__loop.create_task(self.__listen())
 
+        self.__send_ready_signal()
         self.__push_states()
 
     def kill(self) -> None:

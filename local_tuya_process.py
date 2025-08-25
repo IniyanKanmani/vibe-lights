@@ -16,7 +16,7 @@ class LocalTuyaProcess(multiprocessing.Process):
     ) -> None:
         super().__init__()
 
-        scanner.SCANTIME = 30
+        scanner.SCANTIME = 30  # just for the tinytuya.scanner module
 
         self.__process_connection = process_connection
         self.__process_queue = process_queue
@@ -44,16 +44,16 @@ class LocalTuyaProcess(multiprocessing.Process):
 
             self.__devices = []
             for device in devices:
-                if device["category"] == "dj":
-                    data = {
-                        "id": device["id"],
-                        "name": device["name"],
-                        "ip_address": device["ip"],
-                        "local_key": device["key"],
-                        "version": device["version"],
-                    }
+                data = {
+                    "id": device["id"],
+                    "name": device["name"],
+                    "ip_address": device["ip"],
+                    "local_key": device["key"],
+                    "category": device["category"],
+                    "version": device["version"],
+                }
 
-                    self.__devices.append(data)
+                self.__devices.append(data)
 
         os.unlink("snapshot.json")
         os.unlink("tuya-raw.json")
@@ -61,10 +61,16 @@ class LocalTuyaProcess(multiprocessing.Process):
         os.unlink("tinytuya.json")
 
     def __connect(self) -> None:
-        self.__lights = []
+        self.__lights: List[BulbDevice] = []
         self.__initial_light_states = {}
+        self.__same_value_max = None
+
+        light_value_max = None
 
         for device in self.__devices:
+            if device["category"] != "dj":
+                continue
+
             light = BulbDevice(
                 dev_id=device["id"],
                 address=device["ip_address"],
@@ -77,19 +83,35 @@ class LocalTuyaProcess(multiprocessing.Process):
             status = light.status()
             self.__initial_light_states[device["id"]] = status["dps"]
 
+            if light_value_max is None:
+                light_value_max = light.dpset["value_max"]
+            elif light_value_max != light.dpset["value_max"]:
+                self.__same_value_max = False
+
             light.set_mode("colour", nowait=True)
+
+        if self.__same_value_max is None:
+            self.__same_value_max = True
 
         self.__connection_status = True
 
     def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
-        br = brightness / 1000
-        hex = BulbDevice.rgb_to_hexvalue(*rgb_color, hexformat="hsv16")
-        h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
-        value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
+        if self.__same_value_max:
+            br = brightness / 1000
+            hex = BulbDevice.rgb_to_hexvalue(*rgb_color, hexformat="hsv16")
+            h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
+            value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
+        else:
+            br = None
+            hex = BulbDevice.rgb_to_hexvalue(*rgb_color, hexformat="hsv16")
+            h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
+            value = None
 
         for i in range(len(self.__lights)):
-            # br = brightness / light.dpset["value_max"]
-            # value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
+            if not br:
+                br = brightness / self.__lights[i].dpset["value_max"]
+            if not value:
+                value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
 
             self.__lights[i].set_multiple_values(
                 {
@@ -98,20 +120,6 @@ class LocalTuyaProcess(multiprocessing.Process):
                 },
                 nowait=True,
             )
-
-    def __recover_light_state(self) -> None:
-        for i in range(len(self.__lights)):
-            light = self.__lights[i]
-
-            if i == len(self.__lights) - 1:
-                nowait = False
-            else:
-                nowait = True
-
-            data = self.__initial_light_states[light.id]
-            light.set_multiple_values(data, nowait=nowait)
-
-        print("Initial State Restored")
 
     def __push_states(self) -> None:
         while True:
@@ -127,13 +135,27 @@ class LocalTuyaProcess(multiprocessing.Process):
                     print("Queue Closed")
                     break
 
+    def __recover_light_state(self) -> None:
+        for i in range(len(self.__lights)):
+            light = self.__lights[i]
+
+            if i == len(self.__lights) - 1:
+                nowait = False
+            else:
+                nowait = True
+
+            data = self.__initial_light_states[light.id]
+            light.set_multiple_values(data, nowait=nowait)
+
+        print("Initial State Restored")
+
     def __close_connection(self) -> None:
         for light in self.__lights:
             light.close()
 
         self.__connection_status = False
 
-        print("Connection Closed")
+        print("Local Tuya Connection Closed")
 
     def __send_ready_signal(self) -> None:
         self.__process_connection.send("ready")
@@ -162,4 +184,4 @@ class LocalTuyaProcess(multiprocessing.Process):
         sleep(0.25)
         self.__close_connection()
 
-        print("Tuya Local Process Killed")
+        print("Local Tuya Process Killed")

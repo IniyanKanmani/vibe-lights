@@ -73,22 +73,16 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
 
         states = list(filter(lambda x: str(x["entity_id"]).startswith("light"), states))
 
-        # with open("states.json", "w") as f:
-        #     f.write(dumps(states))
-
         self.__store_initial_light_states(states)
         self.__lights = list(map(lambda x: x["entity_id"], states))
 
         print(self.__lights, end="\n\n")
 
-    async def __fetch_light_actions(self) -> None:
-        response = await self.__client_session.get(url="/services")
-        actions = response.json()
-
-        actions = list(filter(lambda x: x["domain"] == "light", actions))[0]
-
-        # with open("actions.json", "w") as f:
-        #     f.write(dumps({"light": actions["services"]}))
+    # async def __fetch_light_actions(self) -> None:
+    #     response = await self.__client_session.get(url="/services")
+    #     actions = response.json()
+    #
+    #     actions = list(filter(lambda x: x["domain"] == "light", actions))[0]
 
     async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         data = {
@@ -104,8 +98,26 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             )
         except httpx.TimeoutException:
             print("Timeout")
+        except httpx.ReadError:
+            print("ReadError")
         except httpx.RemoteProtocolError:
             print("RemoteProtocolError")
+
+    def __push_states(self) -> None:
+        while True:
+            try:
+                br, cl = self.__process_queue.get(timeout=5)
+                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+
+                self.__loop.call_soon_threadsafe(
+                    asyncio.create_task, self.__send_light_state(br, cl)
+                )
+            except queue.Empty:
+                print("Queue Empty")
+            finally:
+                if not self.__connection_status:
+                    print("Queue Closed")
+                    break
 
     async def __recover_light_state(self) -> None:
         messages = []
@@ -139,30 +151,21 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             await asyncio.gather(*messages)
         except httpx.TimeoutException:
             print("Timeout")
+        except httpx.ReadError:
+            print("ReadError")
         except httpx.RemoteProtocolError:
             print("RemoteProtocolError")
 
         print("Initial State Restored")
 
-    def __push_states(self) -> None:
-        while True:
-            try:
-                br, cl = self.__process_queue.get(timeout=5)
-                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
-
-                self.__loop.call_soon_threadsafe(
-                    asyncio.create_task, self.__send_light_state(br, cl)
-                )
-            except queue.Empty:
-                print("Queue Empty")
-            finally:
-                if not self.__connection_status:
-                    print("Queue Closed")
-                    break
-
     async def __close_connection(self) -> None:
         await self.__client_session.aclose()
         self.__connection_status = False
+
+        print("Rest API Connection Closed")
+
+    def __send_ready_signal(self) -> None:
+        self.__process_connection.send("ready")
 
     def __process_connection_listener(self):
         while True:
@@ -172,20 +175,22 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
                 self.kill()
                 self.close()
 
+                break
+
     def run(self) -> None:
         self.__initialize_loop()
-
         self.__connect()
 
         asyncio.run_coroutine_threadsafe(
             self.__fetch_light_states(), self.__loop
         ).result()
-        asyncio.run_coroutine_threadsafe(
-            self.__fetch_light_actions(), self.__loop
-        ).result()
+        # asyncio.run_coroutine_threadsafe(
+        #     self.__fetch_light_actions(), self.__loop
+        # ).result()
 
         threading.Thread(target=self.__process_connection_listener, daemon=True).start()
 
+        self.__send_ready_signal()
         self.__push_states()
 
     def kill(self) -> None:
