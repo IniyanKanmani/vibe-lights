@@ -78,12 +78,6 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
 
         print(self.__lights, end="\n\n")
 
-    # async def __fetch_light_actions(self) -> None:
-    #     response = await self.__client_session.get(url="/services")
-    #     actions = response.json()
-    #
-    #     actions = list(filter(lambda x: x["domain"] == "light", actions))[0]
-
     async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         data = {
             "entity_id": self.__lights,
@@ -106,7 +100,7 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=5)
+                br, cl = self.__process_queue.get(timeout=1)
                 print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__loop.call_soon_threadsafe(
@@ -172,26 +166,28 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             message = self.__process_connection.recv()
 
             if message == "kill":
-                self.kill()
-                self.close()
-
                 break
 
+        self.kill()
+        self.close()
+
     def run(self) -> None:
-        self.__initialize_loop()
-        self.__connect()
+        try:
+            self.__initialize_loop()
+            self.__connect()
 
-        asyncio.run_coroutine_threadsafe(
-            self.__fetch_light_states(), self.__loop
-        ).result()
-        # asyncio.run_coroutine_threadsafe(
-        #     self.__fetch_light_actions(), self.__loop
-        # ).result()
+            asyncio.run_coroutine_threadsafe(
+                self.__fetch_light_states(), self.__loop
+            ).result()
 
-        threading.Thread(target=self.__process_connection_listener, daemon=True).start()
+            threading.Thread(
+                target=self.__process_connection_listener, daemon=True
+            ).start()
 
-        self.__send_ready_signal()
-        self.__push_states()
+            self.__send_ready_signal()
+            self.__push_states()
+        except KeyboardInterrupt:
+            pass
 
     def kill(self) -> None:
         asyncio.run_coroutine_threadsafe(

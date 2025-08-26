@@ -95,17 +95,6 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
         print(self.__lights, end="\n\n")
 
-    # async def __fetch_light_actions(self) -> None:
-    #     await self.__ha_socket.send(dumps({"id": self.__id, "type": "get_services"}))
-    #     self.__id += 1
-    #
-    #     actions = loads(await self.__ha_socket.recv())["result"]
-    #     actions = {"light": actions["light"]}
-
-    # async def __listen(self) -> None:
-    #     async for event in self.__ha_socket:
-    #         print(loads(event))
-
     async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         data = dumps(
             {
@@ -125,7 +114,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=3)
+                br, cl = self.__process_queue.get(timeout=1)
                 print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__loop.call_soon_threadsafe(
@@ -190,35 +179,33 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
             message = self.__process_connection.recv()
 
             if message == "kill":
-                self.kill()
-                self.close()
-
                 break
 
+        self.kill()
+        self.close()
+
     def run(self) -> None:
-        self.__initialize_loop()
-        asyncio.run_coroutine_threadsafe(self.__connect(), self.__loop).result()
+        try:
+            self.__initialize_loop()
+            asyncio.run_coroutine_threadsafe(self.__connect(), self.__loop).result()
 
-        if not self.__connection_status:
-            raise Exception("Websocket: Auth Invalid")
+            if not self.__connection_status:
+                raise Exception("Websocket: Auth Invalid")
 
-        asyncio.run_coroutine_threadsafe(
-            self.__fetch_light_states(), self.__loop
-        ).result()
-        # asyncio.run_coroutine_threadsafe(
-        #     self.__fetch_light_actions(), self.__loop
-        # ).result()
+            asyncio.run_coroutine_threadsafe(
+                self.__fetch_light_states(), self.__loop
+            ).result()
 
-        threading.Thread(target=self.__process_connection_listener, daemon=True).start()
+            threading.Thread(
+                target=self.__process_connection_listener, daemon=True
+            ).start()
 
-        # self.__listener_task = self.__loop.create_task(self.__listen())
-
-        self.__send_ready_signal()
-        self.__push_states()
+            self.__send_ready_signal()
+            self.__push_states()
+        except KeyboardInterrupt:
+            pass
 
     def kill(self) -> None:
-        # self.__listener_task.cancel()
-
         asyncio.run_coroutine_threadsafe(
             self.__recover_initial_state(), self.__loop
         ).result()

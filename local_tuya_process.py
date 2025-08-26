@@ -61,9 +61,10 @@ class LocalTuyaProcess(multiprocessing.Process):
         os.unlink("tinytuya.json")
 
     def __connect(self) -> None:
-        self.__lights: List[BulbDevice] = []
+        self.__light_devices: List[BulbDevice] = []
         self.__initial_light_states = {}
         self.__same_value_max = None
+        self.__lights = []
 
         light_value_max = None
 
@@ -78,7 +79,9 @@ class LocalTuyaProcess(multiprocessing.Process):
                 version=device["version"],
                 persist=True,
             )
-            self.__lights.append(light)
+            self.__light_devices.append(light)
+
+            self.__lights.append(device["name"])
 
             status = light.status()
             self.__initial_light_states[device["id"]] = status["dps"]
@@ -95,6 +98,8 @@ class LocalTuyaProcess(multiprocessing.Process):
 
         self.__connection_status = True
 
+        print(self.__lights, end="\n\n")
+
     def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         if self.__same_value_max:
             br = brightness / 1000
@@ -107,13 +112,13 @@ class LocalTuyaProcess(multiprocessing.Process):
             h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
             value = None
 
-        for i in range(len(self.__lights)):
+        for i in range(len(self.__light_devices)):
             if not br:
-                br = brightness / self.__lights[i].dpset["value_max"]
+                br = brightness / self.__light_devices[i].dpset["value_max"]
             if not value:
                 value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
 
-            self.__lights[i].set_multiple_values(
+            self.__light_devices[i].set_multiple_values(
                 {
                     "21": "colour",
                     "24": value,
@@ -124,7 +129,7 @@ class LocalTuyaProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=3)
+                br, cl = self.__process_queue.get(timeout=1)
                 print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__send_light_state(br, cl)
@@ -136,10 +141,10 @@ class LocalTuyaProcess(multiprocessing.Process):
                     break
 
     def __recover_light_state(self) -> None:
-        for i in range(len(self.__lights)):
-            light = self.__lights[i]
+        for i in range(len(self.__light_devices)):
+            light = self.__light_devices[i]
 
-            if i == len(self.__lights) - 1:
+            if i == len(self.__light_devices) - 1:
                 nowait = False
             else:
                 nowait = True
@@ -150,7 +155,7 @@ class LocalTuyaProcess(multiprocessing.Process):
         print("Initial State Restored")
 
     def __close_connection(self) -> None:
-        for light in self.__lights:
+        for light in self.__light_devices:
             light.close()
 
         self.__connection_status = False
@@ -165,23 +170,28 @@ class LocalTuyaProcess(multiprocessing.Process):
             message = self.__process_connection.recv()
 
             if message == "kill":
-                self.kill()
-                self.close()
-
                 break
 
+        self.kill()
+        self.close()
+
     def run(self) -> None:
-        self.__initialize()
-        self.__connect()
+        try:
+            self.__initialize()
+            self.__connect()
 
-        threading.Thread(target=self.__process_connection_listener, daemon=True).start()
+            threading.Thread(
+                target=self.__process_connection_listener, daemon=True
+            ).start()
 
-        self.__send_ready_signal()
-        self.__push_states()
+            self.__send_ready_signal()
+            self.__push_states()
+        except KeyboardInterrupt:
+            pass
 
     def kill(self) -> None:
         self.__recover_light_state()
-        sleep(0.25)
+        sleep(0.3)
         self.__close_connection()
 
-        print("Local Tuya Process Killed")
+        print("Local Tuya Process Finished")
