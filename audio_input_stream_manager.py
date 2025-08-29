@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Callable, Tuple
 
 import numpy as np
@@ -87,6 +88,10 @@ class AudioInputStreamManager:
 
         self.__max_possible_amp = (blocksize // 2) * 1.0 * 0.5
 
+        self.__beat_cooldown = 0
+        self.__prev_magnitude = None
+        self.__mag_history = deque(maxlen=10)
+
         print()
         print(f"Block Size: {blocksize}")
         print(f"Freqs Shape: {self.__freqs.shape}")
@@ -110,54 +115,28 @@ class AudioInputStreamManager:
         window = np.hanning(frames)[:, None]
         magnitude = np.abs(np.fft.rfft(indata * window, axis=0))
 
-        # print(np.min(magnitude), np.average(magnitude), np.max(magnitude))
+        if self.__prev_magnitude is None:
+            self.__prev_magnitude = np.copy(magnitude)
+            return
 
-        br = (np.max(magnitude) / self.__max_possible_amp) * 255
-        br = np.clip(br, 0, 255)
+        mag_diff = magnitude - self.__prev_magnitude
+        mag_diff = np.maximum(0, mag_diff)
 
-        low_bands = magnitude[self.__bands["low"][0] : self.__bands["low"][1]]
-        mid_bands = magnitude[self.__bands["mid"][0] : self.__bands["mid"][1]]
-        high_bands = magnitude[self.__bands["high"][0] : self.__bands["high"][1]]
+        flux = np.sum(mag_diff)
 
-        r = (np.max(low_bands) / self.__max_possible_amp) * 255
-        r = np.clip(r, 0, 255)
+        if len(self.__mag_history) > 0:
+            if self.__beat_cooldown > 0:
+                self.__beat_cooldown -= 1
+            else:
+                mag_history_avg = np.average(self.__mag_history)
+                threashold = mag_history_avg * 1.5
 
-        # low_band_avg = np.average(low_bands)
-        # low_band_max = np.max(low_bands)
-        # r = int(
-        #     (low_band_max if low_band_max / 2 > low_band_avg else low_band_avg) * 255
-        # )
+                if flux > threashold:
+                    print("Beat Detected")
+                    self.__beat_cooldown = 5
 
-        g = (np.max(mid_bands) / self.__max_possible_amp) * 255
-        g = np.clip(r, 0, 255)
-
-        # mid_band_avg = np.average(mid_bands)
-        # mid_band_max = np.max(mid_bands)
-        # g = int(
-        #     (mid_band_max if mid_band_max / 2 > mid_band_avg else mid_band_avg) * 255
-        # )
-
-        b = (np.max(high_bands) / self.__max_possible_amp) * 255
-        b = np.clip(r, 0, 255)
-
-        # print(br, r, g, b)
-
-        # high_band_avg = np.average(high_bands)
-        # high_band_max = np.max(high_bands)
-        # b = int(
-        #     (high_band_max if high_band_max / 2 > high_band_avg else high_band_avg)
-        #     * 255
-        # )
-
-        if len(self.__data) < self.__samples_to_average - 1:
-            self.__data.append([br, r, g, b])
-        else:
-            br, r, g, b = np.array(np.average(self.__data, axis=0), dtype=np.uint8)
-
-            if self.__callback:
-                self.__callback(int(br), [int(r), int(g), int(b)])
-
-            self.__data.clear()
+        self.__mag_history.append(flux)
+        self.__prev_magnitude = np.copy(magnitude)
 
     def __finish_processing(self) -> None:
         if self.__finished_callback:
