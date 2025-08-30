@@ -115,6 +115,8 @@ class AudioInputStreamManager:
         window = np.hanning(frames)[:, None]
         magnitude = np.abs(np.fft.rfft(indata * window, axis=0))
 
+        beat_detected = False
+
         if self.__prev_magnitude is None:
             self.__prev_magnitude = np.copy(magnitude)
             return
@@ -132,11 +134,71 @@ class AudioInputStreamManager:
                 threashold = mag_history_avg * 1.5
 
                 if flux > threashold:
-                    print("Beat Detected")
+                    beat_detected = True
                     self.__beat_cooldown = 5
 
         self.__mag_history.append(flux)
         self.__prev_magnitude = np.copy(magnitude)
+
+        low_bands = magnitude[self.__bands["low"][0] : self.__bands["low"][1]]
+        mid_bands = magnitude[self.__bands["mid"][0] : self.__bands["mid"][1]]
+        high_bands = magnitude[self.__bands["high"][0] : self.__bands["high"][1]]
+
+        # Calculate Red
+        low_log = np.log(low_bands + 1)
+        low_min_log = np.min(low_log)
+        low_max_log = np.max(low_log)
+
+        r = np.sqrt(np.average(np.power(low_bands, 2)))
+        r = np.log(r + 1)
+        r = ((r - low_min_log) / (low_max_log - low_min_log)) * 255
+        r = np.clip(r, 0, 255)
+
+        # Calculate Green
+        mid_log = np.log(mid_bands + 1)
+        mid_min_log = np.min(mid_log)
+        mid_max_log = np.max(mid_log)
+
+        g = np.sqrt(np.average(np.power(mid_bands, 2)))
+        g = np.log(g + 1)
+        g = ((g - mid_min_log) / (mid_max_log - mid_min_log)) * 255
+        g = np.clip(g, 0, 255)
+
+        # Calculate Blue
+        high_log = np.log(high_bands + 1)
+        high_min_log = np.min(high_log)
+        high_max_log = np.max(high_log)
+
+        b = np.sqrt(np.average(np.power(high_bands, 2)))
+        b = np.log(b + 1)
+        b = ((b - high_min_log) / (high_max_log - high_min_log)) * 255
+        b = np.clip(b, 0, 255)
+
+        # Calculate Brightness
+        if beat_detected:
+            br = 255
+        else:
+            br_mag = magnitude[self.__bands["low"][0] : self.__bands["high"][1]]
+            mag_log = np.log(br_mag + 1)
+            mag_min_log = np.min(mag_log)
+            mag_max_log = np.max(mag_log)
+
+            br = np.sqrt(np.average(np.power(br_mag, 2)))
+            br = np.log(br + 1)
+            br = ((br - mag_min_log) / (mag_max_log - mag_min_log)) * 255
+            br = np.clip(br, 0, 255)
+
+        # print(br, r, g, b)
+
+        if len(self.__data) < self.__samples_to_average - 1:
+            self.__data.append([br, r, g, b])
+        else:
+            br, r, g, b = np.array(np.average(self.__data, axis=0), dtype=np.uint8)
+
+            if self.__callback:
+                self.__callback(int(br), [int(r), int(g), int(b)])
+
+            self.__data.clear()
 
     def __finish_processing(self) -> None:
         if self.__finished_callback:
