@@ -44,6 +44,9 @@ class LocalTuyaProcess(multiprocessing.Process):
 
             self.__devices = []
             for device in devices:
+                if device["category"] != "dj":
+                    continue
+
                 data = {
                     "id": device["id"],
                     "name": device["name"],
@@ -54,11 +57,6 @@ class LocalTuyaProcess(multiprocessing.Process):
                 }
 
                 self.__devices.append(data)
-
-        os.unlink("snapshot.json")
-        os.unlink("tuya-raw.json")
-        os.unlink("devices.json")
-        os.unlink("tinytuya.json")
 
     def __connect(self) -> None:
         self.__light_devices: List[BulbDevice] = []

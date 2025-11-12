@@ -1,3 +1,4 @@
+import json
 from collections import deque
 from typing import Callable, Tuple
 
@@ -21,7 +22,8 @@ class AudioInputStreamManager:
         print()
 
         device_details = dict(sd.query_devices(self.__input_device))
-        print("Input Device: ", device_details)
+        print("Input Device: ")
+        print(json.dumps(device_details, indent=4))
 
         print()
 
@@ -58,7 +60,7 @@ class AudioInputStreamManager:
     ) -> None:
         self.__input_stream = sd.InputStream(
             samplerate=self.__samplerate,
-            blocksize=1024,
+            blocksize=int((ms * self.__samplerate) / 1000),
             device=self.__input_device,
             channels=self.__channels,
             dtype="float32",
@@ -76,15 +78,12 @@ class AudioInputStreamManager:
         self.__freqs = np.fft.rfftfreq(blocksize, 1.0 / self.__samplerate)
         self.__bands = {
             "low": self.__find_lower_and_upper_freqs(20, 250),
-            "mid": self.__find_lower_and_upper_freqs(250, 4000),
-            "high": self.__find_lower_and_upper_freqs(4000, 12000),
+            "mid": self.__find_lower_and_upper_freqs(250, 2000),
+            "high": self.__find_lower_and_upper_freqs(2000, 16000),
         }
 
         self.__callback = callback
         self.__finished_callback = finished_callback
-
-        self.__data = []
-        self.__samples_to_average = int((ms * self.__samplerate) / (blocksize * 1000))
 
         self.__max_possible_amp = (blocksize // 2) * 1.0 * 0.5
 
@@ -98,7 +97,6 @@ class AudioInputStreamManager:
         print(f"Freqs Interval: {self.__freqs[1]}")
         print(f"Freqs Max: {self.__freqs[-1]}")
         print(f"Bands Freqs: {self.__bands}")
-        print(f"Samples Number: {self.__samples_to_average}")
         print(f"Max Possible Amp: {self.__max_possible_amp}")
         print()
 
@@ -135,7 +133,8 @@ class AudioInputStreamManager:
 
                 if flux > threashold:
                     beat_detected = True
-                    self.__beat_cooldown = 5
+                    print("Beat Detected")
+                    self.__beat_cooldown = 7
 
         self.__mag_history.append(flux)
         self.__prev_magnitude = np.copy(magnitude)
@@ -145,9 +144,12 @@ class AudioInputStreamManager:
         high_bands = magnitude[self.__bands["high"][0] : self.__bands["high"][1]]
 
         # Calculate Red
-        low_log = np.log(low_bands + 1)
-        low_min_log = np.min(low_log)
-        low_max_log = np.max(low_log)
+        # low_log = np.log(low_bands + 1)
+        # low_min_log = np.min(low_log)
+        # low_max_log = np.max(low_log)
+
+        low_min_log = 0.5
+        low_max_log = 10.0
 
         r = np.sqrt(np.average(np.power(low_bands, 2)))
         r = np.log(r + 1)
@@ -155,9 +157,12 @@ class AudioInputStreamManager:
         r = np.clip(r, 0, 255)
 
         # Calculate Green
-        mid_log = np.log(mid_bands + 1)
-        mid_min_log = np.min(mid_log)
-        mid_max_log = np.max(mid_log)
+        # mid_log = np.log(mid_bands + 1)
+        # mid_min_log = np.min(mid_log)
+        # mid_max_log = np.max(mid_log)
+
+        mid_min_log = 0.25
+        mid_max_log = 5.0
 
         g = np.sqrt(np.average(np.power(mid_bands, 2)))
         g = np.log(g + 1)
@@ -165,9 +170,12 @@ class AudioInputStreamManager:
         g = np.clip(g, 0, 255)
 
         # Calculate Blue
-        high_log = np.log(high_bands + 1)
-        high_min_log = np.min(high_log)
-        high_max_log = np.max(high_log)
+        # high_log = np.log(high_bands + 1)
+        # high_min_log = np.min(high_log)
+        # high_max_log = np.max(high_log)
+
+        high_min_log = 0.1
+        high_max_log = 2.5
 
         b = np.sqrt(np.average(np.power(high_bands, 2)))
         b = np.log(b + 1)
@@ -190,15 +198,18 @@ class AudioInputStreamManager:
 
         # print(br, r, g, b)
 
-        if len(self.__data) < self.__samples_to_average - 1:
-            self.__data.append([br, r, g, b])
-        else:
-            br, r, g, b = np.array(np.average(self.__data, axis=0), dtype=np.uint8)
+        if self.__callback:
+            self.__callback(int(br), [int(r), int(g), int(b)])
 
-            if self.__callback:
-                self.__callback(int(br), [int(r), int(g), int(b)])
-
-            self.__data.clear()
+        # if len(self.__data) < self.__samples_to_average - 1:
+        #     self.__data.append([br, r, g, b])
+        # else:
+        #     br, r, g, b = np.array(np.average(self.__data, axis=0), dtype=np.uint8)
+        #
+        #     if self.__callback:
+        #         self.__callback(int(br), [int(r), int(g), int(b)])
+        #
+        #     self.__data.clear()
 
     def __finish_processing(self) -> None:
         if self.__finished_callback:
