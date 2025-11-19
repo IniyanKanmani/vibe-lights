@@ -53,18 +53,17 @@ class AudioInputStreamManager:
 
     def build_stream(
         self,
-        ms: float = 100,
-        latency: float | None = None,
+        latency: float = 100,
         callback: Callable | None = None,
         finished_callback: Callable | None = None,
     ) -> None:
         self.__input_stream = sd.InputStream(
             samplerate=self.__samplerate,
-            blocksize=int((ms * self.__samplerate) / 1000),
+            blocksize=int((latency * self.__samplerate) / 1000),
             device=self.__input_device,
             channels=self.__channels,
             dtype="float32",
-            latency=latency,
+            # latency=latency,
             callback=self.__process_audio,
             finished_callback=self.__finish_processing,
             clip_off=None,
@@ -134,7 +133,7 @@ class AudioInputStreamManager:
                 if flux > threashold:
                     beat_detected = True
                     print("Beat Detected")
-                    self.__beat_cooldown = 7
+                    self.__beat_cooldown = 5
 
         self.__mag_history.append(flux)
         self.__prev_magnitude = np.copy(magnitude)

@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import signal
+from time import sleep
 from typing import List
 
 from dotenv import load_dotenv
@@ -41,7 +42,9 @@ def main() -> None:
 
     audio_manager.initialize_stream()
     audio_manager.build_stream(
-        ms=500, latency=None, callback=callback, finished_callback=finished_callback
+        latency=85.34,
+        callback=callback,
+        finished_callback=finished_callback,
     )
 
     setup_cleanup(audio_manager)
@@ -49,6 +52,7 @@ def main() -> None:
     backend_process.start()
 
     if server_con.recv() == "ready":
+        sleep(0.5)
         audio_manager.start_stream()
 
 

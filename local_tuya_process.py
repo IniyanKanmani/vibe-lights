@@ -47,6 +47,9 @@ class LocalTuyaProcess(multiprocessing.Process):
                 if device["category"] != "dj":
                     continue
 
+                if "music" not in device["mapping"]["21"]["values"]["range"]:
+                    continue
+
                 data = {
                     "id": device["id"],
                     "name": device["name"],
@@ -89,7 +92,7 @@ class LocalTuyaProcess(multiprocessing.Process):
             elif light_value_max != light.dpset["value_max"]:
                 self.__same_value_max = False
 
-            light.set_mode("colour", nowait=True)
+            light.set_mode("music", nowait=False)
 
         if self.__same_value_max is None:
             self.__same_value_max = True
@@ -99,30 +102,20 @@ class LocalTuyaProcess(multiprocessing.Process):
         print(self.__lights, end="\n\n")
 
     def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
-        if self.__same_value_max:
-            br = brightness / 1000
-            hex = BulbDevice.rgb_to_hexvalue(*rgb_color, hexformat="hsv16")
-            h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
-            value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
-        else:
-            br = None
-            hex = BulbDevice.rgb_to_hexvalue(*rgb_color, hexformat="hsv16")
-            h, s, _ = BulbDevice.hexvalue_to_hsv(hex, "hsv16")
-            value = None
+        # 011112222333344445555 - transition, r, g, b, colortemp, br
+        hex = ""
+        hex += "%x" % 0
+        hex += BulbDevice.rgb_to_hexvalue(
+            rgb_color[0],
+            rgb_color[1],
+            rgb_color[2],
+            "hsv16",
+        )
+        hex += "%04x" % 0
+        hex += "%04x" % int(1000 * (brightness / 255))
 
-        for i in range(len(self.__light_devices)):
-            if not br:
-                br = brightness / self.__light_devices[i].dpset["value_max"]
-            if not value:
-                value = BulbDevice.hsv_to_hexvalue(h, s, br, "hsv16")
-
-            self.__light_devices[i].set_multiple_values(
-                {
-                    "21": "colour",
-                    "24": value,
-                },
-                nowait=True,
-            )
+        for light in self.__light_devices:
+            light.set_value("27", hex, nowait=True)
 
     def __push_states(self) -> None:
         while True:
@@ -188,6 +181,7 @@ class LocalTuyaProcess(multiprocessing.Process):
             pass
 
     def kill(self) -> None:
+        sleep(0.1)
         self.__recover_light_state()
         sleep(0.3)
         self.__close_connection()
