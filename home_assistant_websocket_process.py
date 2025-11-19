@@ -34,7 +34,13 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         self.__loop.run_forever()
 
     async def __connect(self) -> None:
-        self.__ha_socket = await websockets.connect(self.__base_url)
+        self.__ha_socket = await websockets.connect(
+            self.__base_url,
+            open_timeout=1,
+            ping_interval=None,
+            ping_timeout=None,
+            close_timeout=1,
+        )
 
         try:
             message = loads(await self.__ha_socket.recv())
@@ -60,6 +66,9 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         initial_light_states = {}
 
         for state in states:
+            if state["state"] == "unavailable":
+                continue
+
             initial_light_states[state["entity_id"]] = {
                 "state": state["state"],
                 "attributes": {
@@ -91,7 +100,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         )
 
         self.__store_initial_light_states(states)
-        self.__lights = list(map(lambda x: x["entity_id"], states))
+        self.__lights = list(self.__initial_light_states.keys())
 
         print(self.__lights, end="\n\n")
 
@@ -114,7 +123,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=1)
+                br, cl = self.__process_queue.get(timeout=0.5)
                 print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__loop.call_soon_threadsafe(
