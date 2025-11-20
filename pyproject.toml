@@ -3,13 +3,14 @@ name = "vibe-lights"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
+    "cryptography>=46.0.3",
     "dotenv>=0.9.9",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
-    "numpy>=2.3.2",
-    "sounddevice>=0.5.2",
-    "tinytuya>=1.17.3",
+    "numpy>=2.3.5",
+    "sounddevice>=0.5.3",
+    "tinytuya>=1.17.4",
     "websockets>=15.0.1",
 ]
