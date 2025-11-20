@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import queue
+import sys
 import threading
 from json import dumps, loads
 from multiprocessing.connection import Connection
@@ -27,6 +28,9 @@ class LocalTuyaProcess(multiprocessing.Process):
         self.__connection_status = False
 
     def __initialize(self) -> None:
+        logger.remove(0)
+        logger.add(sys.stderr, level=str(os.getenv("LOG_LEVEL") or "INFO"))
+
         if not os.path.exists("devices.json"):
             config = {
                 "apiKey": os.getenv("TUYA_API_KEY"),
@@ -36,7 +40,7 @@ class LocalTuyaProcess(multiprocessing.Process):
             }
 
             with open("tinytuya.json", "w") as f:
-                f.write(dumps(config))
+                f.write(dumps(config, indent=2))
 
             wizard.wizard(
                 assume_yes=True,
@@ -44,39 +48,35 @@ class LocalTuyaProcess(multiprocessing.Process):
             )
 
         with open("devices.json", "r") as f:
-            devices = loads(f.read())
+            devs = loads(f.read())
 
-            self.__devices = []
-            for device in devices:
-                if device["category"] != "dj":
+            devices = []
+            for dev in devs:
+                if dev["category"] != "dj":
                     continue
 
-                if "music" not in device["mapping"]["21"]["values"]["range"]:
+                if "music" not in dev["mapping"]["21"]["values"]["range"]:
                     continue
 
                 data = {
-                    "id": device["id"],
-                    "name": device["name"],
-                    "ip_address": device["ip"],
-                    "local_key": device["key"],
-                    "category": device["category"],
-                    "version": device["version"],
+                    "id": dev["id"],
+                    "name": dev["name"],
+                    "ip_address": dev["ip"],
+                    "local_key": dev["key"],
+                    "category": dev["category"],
+                    "version": dev["version"],
                 }
 
-                self.__devices.append(data)
+                devices.append(data)
+
+        self.__devices = devices
 
     def __connect(self) -> None:
-        self.__light_devices: List[BulbDevice] = []
-        self.__initial_light_states = {}
-        self.__same_value_max = None
         self.__lights = []
-
-        light_value_max = None
+        self.__initial_light_states = {}
+        self.__light_devices: List[BulbDevice] = []
 
         for device in self.__devices:
-            if device["category"] != "dj":
-                continue
-
             light = BulbDevice(
                 dev_id=device["id"],
                 address=device["ip_address"],
@@ -84,29 +84,57 @@ class LocalTuyaProcess(multiprocessing.Process):
                 version=device["version"],
                 persist=True,
             )
-            self.__light_devices.append(light)
 
             self.__lights.append(device["name"])
+            self.__light_devices.append(light)
 
             status = light.status()
             self.__initial_light_states[device["id"]] = status["dps"]
 
-            if light_value_max is None:
-                light_value_max = light.dpset["value_max"]
-            elif light_value_max != light.dpset["value_max"]:
-                self.__same_value_max = False
-
             light.set_mode("music", nowait=False)
-
-        if self.__same_value_max is None:
-            self.__same_value_max = True
 
         self.__connection_status = True
 
         logger.info(f"Lights: {self.__lights}")
 
-    def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
-        # Hex Format: 011112222333344445555 - transition, r, g, b, colortemp, br
+    def __worker_threads_creator(self) -> None:
+        self.__is_thread_kill_recieved = False
+        self.__light_state_queues = [queue.Queue()] * len(self.__lights)
+
+        for i, q in enumerate(self.__light_state_queues):
+            threading.Thread(
+                target=self.__light_device_thread_executor,
+                args=(q, self.__light_devices[i]),
+            ).start()
+
+    def __light_device_thread_executor(self, q: queue.Queue, device: BulbDevice):
+        while True:
+            try:
+                msg = q.get(timeout=1)
+
+                device.set_value(msg[0], msg[1], nowait=True)
+            except queue.Empty:
+                if not self.__is_thread_kill_recieved:
+                    continue
+                else:
+                    break
+
+    def __light_states_listener(self) -> None:
+        while True:
+            try:
+                br, cl = self.__process_queue.get(timeout=1)
+                self.__light_state_converter(br, cl)
+
+                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+            except queue.Empty:
+                if self.__connection_status:
+                    logger.debug("Queue Empty")
+                else:
+                    break
+
+    def __light_state_converter(self, brightness: int, rgb_color: List[int]) -> None:
+        # Order: transition, r, g, b, colortemp, brightness
+        # Hex Format: 011112222333344445555
         hex = ""
         hex += "%x" % 0
         hex += BulbDevice.rgb_to_hexvalue(
@@ -118,43 +146,20 @@ class LocalTuyaProcess(multiprocessing.Process):
         hex += "%04x" % 0
         hex += "%04x" % int(1000 * (brightness / 255))
 
-        for light in self.__light_devices:
-            light.set_value("27", hex, nowait=True)
-
-    def __push_states(self) -> None:
-        while True:
-            try:
-                br, cl = self.__process_queue.get(timeout=1)
-                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
-
-                self.__send_light_state(br, cl)
-            except queue.Empty:
-                if self.__connection_status:
-                    logger.debug("Queue Empty")
-                else:
-                    break
+        for q in self.__light_state_queues:
+            q.put_nowait(("27", hex))
 
     def __recover_light_state(self) -> None:
-        for i in range(len(self.__light_devices)):
-            light = self.__light_devices[i]
-
-            if i == len(self.__light_devices) - 1:
-                nowait = False
-            else:
+        for i, device in enumerate(self.__light_devices):
+            if i != len(self.__light_devices) - 1:
                 nowait = True
+            else:
+                nowait = False
 
-            data = self.__initial_light_states[light.id]
-            light.set_multiple_values(data, nowait=nowait)
+            data = self.__initial_light_states[device.id]
+            device.set_multiple_values(data, nowait=nowait)
 
         logger.debug("Initial State Restored")
-
-    def __close_connection(self) -> None:
-        for light in self.__light_devices:
-            light.close()
-
-        self.__connection_status = False
-
-        logger.debug("Local Tuya Connection Closed")
 
     def __send_ready_signal(self) -> None:
         self.__process_connection.send("ready")
@@ -165,6 +170,8 @@ class LocalTuyaProcess(multiprocessing.Process):
 
             if message == "kill":
                 break
+
+        self.__is_thread_kill_recieved = True
 
         self.kill()
         self.close()
@@ -178,10 +185,20 @@ class LocalTuyaProcess(multiprocessing.Process):
                 target=self.__process_connection_listener,
             ).start()
 
+            self.__worker_threads_creator()
             self.__send_ready_signal()
-            self.__push_states()
+
+            self.__light_states_listener()
         except KeyboardInterrupt:
             pass
+
+    def __close_connection(self) -> None:
+        for device in self.__light_devices:
+            device.close()
+
+        self.__connection_status = False
+
+        logger.debug("Local Tuya Connection Closed")
 
     def kill(self) -> None:
         sleep(0.3)

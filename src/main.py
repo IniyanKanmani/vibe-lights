@@ -18,7 +18,7 @@ def main() -> None:
     load_dotenv()
 
     logger.remove(0)
-    logger.add(sys.stderr, level=str(os.getenv("LOG_LEVEL") or "DEBUG"))
+    logger.add(sys.stderr, level=str(os.getenv("LOG_LEVEL") or "INFO"))
 
     backend = str(os.getenv("BACKEND")).lower()
 
