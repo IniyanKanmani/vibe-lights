@@ -28,13 +28,13 @@ def main() -> None:
     audio_manager = AudioInputStreamManager()
     backend_process = None
 
-    if backend == "rest_api":
+    if backend == "restapi":
         backend_process = HomeAssistantRestAPIProcess(client_con, process_queue)
 
-    elif backend == "web_socket":
+    elif backend == "websocket":
         backend_process = HomeAssistantWebSocketProcess(client_con, process_queue)
 
-    elif backend == "local_tuya":
+    elif backend == "localtuya":
         backend_process = LocalTuyaProcess(client_con, process_queue)
 
     else:

@@ -18,6 +18,8 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
     ) -> None:
         super().__init__()
 
+        logger.debug("Connection Backend: WebSocket")
+
         self.__process_connection = process_connection
         self.__process_queue = process_queue
 
@@ -135,8 +137,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
             except queue.Empty:
                 if self.__connection_status:
                     logger.debug("Queue Empty")
-            finally:
-                if not self.__connection_status:
+                else:
                     break
 
     async def __recover_initial_state(self) -> None:
@@ -211,7 +212,6 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
             threading.Thread(
                 target=self.__process_connection_listener,
-                daemon=True,
             ).start()
 
             self.__send_ready_signal()

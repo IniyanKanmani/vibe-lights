@@ -17,6 +17,8 @@ class LocalTuyaProcess(multiprocessing.Process):
     ) -> None:
         super().__init__()
 
+        logger.debug("Connection Backend: LocalTuya")
+
         scanner.SCANTIME = 30  # just for the tinytuya.scanner module
 
         self.__process_connection = process_connection
@@ -129,8 +131,7 @@ class LocalTuyaProcess(multiprocessing.Process):
             except queue.Empty:
                 if self.__connection_status:
                     logger.debug("Queue Empty")
-            finally:
-                if not self.__connection_status:
+                else:
                     break
 
     def __recover_light_state(self) -> None:
@@ -175,7 +176,6 @@ class LocalTuyaProcess(multiprocessing.Process):
 
             threading.Thread(
                 target=self.__process_connection_listener,
-                daemon=True,
             ).start()
 
             self.__send_ready_signal()
