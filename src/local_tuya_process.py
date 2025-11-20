@@ -7,6 +7,7 @@ from multiprocessing.connection import Connection
 from time import sleep
 from typing import List
 
+from loguru import logger
 from tinytuya import BulbDevice, scanner, wizard
 
 
@@ -24,20 +25,21 @@ class LocalTuyaProcess(multiprocessing.Process):
         self.__connection_status = False
 
     def __initialize(self) -> None:
-        config = {
-            "apiKey": os.getenv("TUYA_API_KEY"),
-            "apiSecret": os.getenv("TUYA_API_SECRET"),
-            "apiRegion": os.getenv("TUYA_API_REGION"),
-            "apiDeviceID": "scan",
-        }
+        if not os.path.exists("devices.json"):
+            config = {
+                "apiKey": os.getenv("TUYA_API_KEY"),
+                "apiSecret": os.getenv("TUYA_API_SECRET"),
+                "apiRegion": os.getenv("TUYA_API_REGION"),
+                "apiDeviceID": "scan",
+            }
 
-        with open("tinytuya.json", "w") as f:
-            f.write(dumps(config))
+            with open("tinytuya.json", "w") as f:
+                f.write(dumps(config))
 
-        wizard.wizard(
-            assume_yes=True,
-            skip_poll=False,
-        )
+            wizard.wizard(
+                assume_yes=True,
+                skip_poll=False,
+            )
 
         with open("devices.json", "r") as f:
             devices = loads(f.read())
@@ -99,10 +101,10 @@ class LocalTuyaProcess(multiprocessing.Process):
 
         self.__connection_status = True
 
-        print(self.__lights, end="\n\n")
+        logger.info(f"Lights: {self.__lights}")
 
     def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
-        # 011112222333344445555 - transition, r, g, b, colortemp, br
+        # Hex Format: 011112222333344445555 - transition, r, g, b, colortemp, br
         hex = ""
         hex += "%x" % 0
         hex += BulbDevice.rgb_to_hexvalue(
@@ -121,14 +123,14 @@ class LocalTuyaProcess(multiprocessing.Process):
         while True:
             try:
                 br, cl = self.__process_queue.get(timeout=1)
-                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__send_light_state(br, cl)
             except queue.Empty:
-                print("Queue Empty")
+                if self.__connection_status:
+                    logger.debug("Queue Empty")
             finally:
                 if not self.__connection_status:
-                    print("Queue Closed")
                     break
 
     def __recover_light_state(self) -> None:
@@ -143,7 +145,7 @@ class LocalTuyaProcess(multiprocessing.Process):
             data = self.__initial_light_states[light.id]
             light.set_multiple_values(data, nowait=nowait)
 
-        print("Initial State Restored")
+        logger.debug("Initial State Restored")
 
     def __close_connection(self) -> None:
         for light in self.__light_devices:
@@ -151,7 +153,7 @@ class LocalTuyaProcess(multiprocessing.Process):
 
         self.__connection_status = False
 
-        print("Local Tuya Connection Closed")
+        logger.debug("Local Tuya Connection Closed")
 
     def __send_ready_signal(self) -> None:
         self.__process_connection.send("ready")
@@ -172,7 +174,8 @@ class LocalTuyaProcess(multiprocessing.Process):
             self.__connect()
 
             threading.Thread(
-                target=self.__process_connection_listener, daemon=True
+                target=self.__process_connection_listener,
+                daemon=True,
             ).start()
 
             self.__send_ready_signal()
@@ -181,9 +184,10 @@ class LocalTuyaProcess(multiprocessing.Process):
             pass
 
     def kill(self) -> None:
-        sleep(0.1)
+        sleep(0.3)
         self.__recover_light_state()
+
         sleep(0.3)
         self.__close_connection()
 
-        print("Local Tuya Process Finished")
+        logger.debug("Local Tuya Process Finished")

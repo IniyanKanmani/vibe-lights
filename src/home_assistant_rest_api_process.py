@@ -4,9 +4,11 @@ import os
 import queue
 import threading
 from multiprocessing.connection import Connection
+from time import sleep
 from typing import List
 
 import httpx
+from loguru import logger
 
 
 class HomeAssistantRestAPIProcess(multiprocessing.Process):
@@ -46,6 +48,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         initial_light_states = {}
 
         for state in states:
+            if state["state"] == "unavailable":
+                continue
+
             initial_light_states[state["entity_id"]] = {
                 "state": state["state"],
                 "attributes": {
@@ -76,7 +81,7 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         self.__store_initial_light_states(states)
         self.__lights = list(map(lambda x: x["entity_id"], states))
 
-        print(self.__lights, end="\n\n")
+        logger.info(f"Lights: {self.__lights}")
 
     async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         data = {
@@ -91,26 +96,27 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
                 json=data,
             )
         except httpx.TimeoutException:
-            print("Timeout")
+            logger.debug("Timeout")
         except httpx.ReadError:
-            print("ReadError")
+            logger.debug("ReadError")
         except httpx.RemoteProtocolError:
-            print("RemoteProtocolError")
+            logger.debug("RemoteProtocolError")
 
     def __push_states(self) -> None:
         while True:
             try:
                 br, cl = self.__process_queue.get(timeout=1)
-                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__loop.call_soon_threadsafe(
-                    asyncio.create_task, self.__send_light_state(br, cl)
+                    asyncio.create_task,
+                    self.__send_light_state(br, cl),
                 )
             except queue.Empty:
-                print("Queue Empty")
+                if self.__connection_status:
+                    logger.debug("Queue Empty")
             finally:
                 if not self.__connection_status:
-                    print("Queue Closed")
                     break
 
     async def __recover_light_state(self) -> None:
@@ -144,19 +150,19 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         try:
             await asyncio.gather(*messages)
         except httpx.TimeoutException:
-            print("Timeout")
+            logger.debug("Timeout")
         except httpx.ReadError:
-            print("ReadError")
+            logger.debug("ReadError")
         except httpx.RemoteProtocolError:
-            print("RemoteProtocolError")
+            logger.debug("RemoteProtocolError")
 
-        print("Initial State Restored")
+        logger.debug("Initial State Restored")
 
     async def __close_connection(self) -> None:
         await self.__client_session.aclose()
         self.__connection_status = False
 
-        print("Rest API Connection Closed")
+        logger.debug("Rest API Connection Closed")
 
     def __send_ready_signal(self) -> None:
         self.__process_connection.send("ready")
@@ -177,11 +183,13 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             self.__connect()
 
             asyncio.run_coroutine_threadsafe(
-                self.__fetch_light_states(), self.__loop
+                self.__fetch_light_states(),
+                self.__loop,
             ).result()
 
             threading.Thread(
-                target=self.__process_connection_listener, daemon=True
+                target=self.__process_connection_listener,
+                daemon=True,
             ).start()
 
             self.__send_ready_signal()
@@ -190,13 +198,18 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             pass
 
     def kill(self) -> None:
+        sleep(0.3)
         asyncio.run_coroutine_threadsafe(
-            self.__recover_light_state(), self.__loop
+            self.__recover_light_state(),
+            self.__loop,
         ).result()
+
+        sleep(0.3)
         asyncio.run_coroutine_threadsafe(
-            self.__close_connection(), self.__loop
+            self.__close_connection(),
+            self.__loop,
         ).result()
 
         self.__loop.stop()
 
-        print("Rest API Process Killed")
+        logger.debug("Rest API Process Killed")

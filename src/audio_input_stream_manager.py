@@ -4,12 +4,15 @@ from typing import Callable, Tuple
 
 import numpy as np
 import sounddevice as sd
+from loguru import logger
 
 
 class AudioInputStreamManager:
     def initialize_stream(self) -> None:
         device_list = sd.query_devices()
-        print(device_list, end="\n\n")
+        logger.info(f"\n{device_list}")
+
+        print()
 
         input_device = input("Choose audio stream input device: ")
 
@@ -22,8 +25,7 @@ class AudioInputStreamManager:
         print()
 
         device_details = dict(sd.query_devices(self.__input_device))
-        print("Input Device: ")
-        print(json.dumps(device_details, indent=4))
+        logger.info("\nInput Device:\n" + json.dumps(device_details, indent=4))
 
         print()
 
@@ -57,9 +59,11 @@ class AudioInputStreamManager:
         callback: Callable | None = None,
         finished_callback: Callable | None = None,
     ) -> None:
+        blocksize = int((latency * self.__samplerate) / 1000)
+
         self.__input_stream = sd.InputStream(
             samplerate=self.__samplerate,
-            blocksize=int((latency * self.__samplerate) / 1000),
+            blocksize=blocksize,
             device=self.__input_device,
             channels=self.__channels,
             dtype="float32",
@@ -71,8 +75,6 @@ class AudioInputStreamManager:
             never_drop_input=None,
             prime_output_buffers_using_stream_callback=None,
         )
-
-        blocksize = self.__input_stream.blocksize
 
         self.__freqs = np.fft.rfftfreq(blocksize, 1.0 / self.__samplerate)
         self.__bands = {
@@ -91,20 +93,30 @@ class AudioInputStreamManager:
         self.__mag_history = deque(maxlen=10)
 
         print()
-        print(f"Block Size: {blocksize}")
-        print(f"Freqs Shape: {self.__freqs.shape}")
-        print(f"Freqs Interval: {self.__freqs[1]}")
-        print(f"Freqs Max: {self.__freqs[-1]}")
-        print(f"Bands Freqs: {self.__bands}")
-        print(f"Max Possible Amp: {self.__max_possible_amp}")
+        logger.info(f"Block Size: {self.__input_stream.blocksize}")
+        logger.info(f"Freqs Shape: {self.__freqs.shape}")
+        logger.info(f"Freqs Interval: {self.__freqs[1]}")
+        logger.info(f"Freqs Max: {self.__freqs[-1]}")
+        logger.info(f"Max Possible Amp: {self.__max_possible_amp}")
+        logger.info(f"Bands Freqs: {self.__bands}")
+        logger.info(
+            f"Low Band: {self.__freqs[self.__bands["low"][0]]} {self.__freqs[self.__bands["low"][1]]}"
+        )
+        logger.info(
+            f"Mid Band: {self.__freqs[self.__bands["mid"][0]]} {self.__freqs[self.__bands["mid"][1]]}"
+        )
+        logger.info(
+            f"High Band: {self.__freqs[self.__bands["high"][0]]} {self.__freqs[self.__bands["high"][1]]}"
+        )
         print()
 
     def start_stream(self) -> None:
+        print()
         self.__input_stream.start()
 
     def __find_lower_and_upper_freqs(self, ll: int, hl: int) -> Tuple[int, int]:
-        li = list(map(lambda x: x > ll, self.__freqs)).index(True) - 1
-        ri = list(map(lambda x: x < hl, self.__freqs)).index(False) + 1
+        li = list(map(lambda x: x > ll, self.__freqs)).index(True)
+        ri = list(map(lambda x: x < hl, self.__freqs)).index(False)
 
         return li, ri
 
@@ -132,7 +144,7 @@ class AudioInputStreamManager:
 
                 if flux > threashold:
                     beat_detected = True
-                    print("Beat Detected")
+                    logger.debug("Beat Detected")
                     self.__beat_cooldown = 5
 
         self.__mag_history.append(flux)
@@ -195,26 +207,14 @@ class AudioInputStreamManager:
             br = ((br - mag_min_log) / (mag_max_log - mag_min_log)) * 255
             br = np.clip(br, 0, 255)
 
-        # print(br, r, g, b)
-
         if self.__callback:
             self.__callback(int(br), [int(r), int(g), int(b)])
-
-        # if len(self.__data) < self.__samples_to_average - 1:
-        #     self.__data.append([br, r, g, b])
-        # else:
-        #     br, r, g, b = np.array(np.average(self.__data, axis=0), dtype=np.uint8)
-        #
-        #     if self.__callback:
-        #         self.__callback(int(br), [int(r), int(g), int(b)])
-        #
-        #     self.__data.clear()
 
     def __finish_processing(self) -> None:
         if self.__finished_callback:
             self.__finished_callback()
 
-        print("Input Stream Finished")
+        logger.debug("Input Stream Finished")
 
     def is_stream_alive(self) -> bool:
         return self.__input_stream.active
@@ -222,4 +222,4 @@ class AudioInputStreamManager:
     def close_stream(self) -> None:
         self.__input_stream.close()
 
-        print("Input Stream Closed")
+        logger.debug("Input Stream Closed")

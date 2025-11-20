@@ -1,10 +1,12 @@
 import multiprocessing
 import os
 import signal
+import sys
 from time import sleep
 from typing import List
 
 from dotenv import load_dotenv
+from loguru import logger
 
 from audio_input_stream_manager import AudioInputStreamManager
 from home_assistant_rest_api_process import HomeAssistantRestAPIProcess
@@ -14,6 +16,10 @@ from local_tuya_process import LocalTuyaProcess
 
 def main() -> None:
     load_dotenv()
+
+    logger.remove(0)
+    logger.add(sys.stderr, level=str(os.getenv("LOG_LEVEL") or "DEBUG"))
+
     backend = str(os.getenv("BACKEND")).lower()
 
     server_con, client_con = multiprocessing.Pipe()
@@ -32,7 +38,7 @@ def main() -> None:
         backend_process = LocalTuyaProcess(client_con, process_queue)
 
     else:
-        raise Exception("Invalid Backend")
+        raise ValueError("Invalid Backend")
 
     def callback(br: int, rgb_color: List[int]) -> None:
         process_queue.put_nowait((br, rgb_color))

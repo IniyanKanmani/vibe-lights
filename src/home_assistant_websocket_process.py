@@ -5,9 +5,11 @@ import queue
 import threading
 from json import dumps, loads
 from multiprocessing.connection import Connection
+from time import sleep
 from typing import List
 
 import websockets
+from loguru import logger
 
 
 class HomeAssistantWebSocketProcess(multiprocessing.Process):
@@ -102,7 +104,7 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
         self.__store_initial_light_states(states)
         self.__lights = list(self.__initial_light_states.keys())
 
-        print(self.__lights, end="\n\n")
+        logger.info(f"Lights: {self.__lights}")
 
     async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
         data = dumps(
@@ -123,17 +125,18 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=0.5)
-                print(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+                br, cl = self.__process_queue.get(timeout=1)
+                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
 
                 self.__loop.call_soon_threadsafe(
-                    asyncio.create_task, self.__send_light_state(br, cl)
+                    asyncio.create_task,
+                    self.__send_light_state(br, cl),
                 )
             except queue.Empty:
-                print("Queue Empty")
+                if self.__connection_status:
+                    logger.debug("Queue Empty")
             finally:
                 if not self.__connection_status:
-                    print("Queue Closed")
                     break
 
     async def __recover_initial_state(self) -> None:
@@ -172,13 +175,13 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
 
         await asyncio.gather(*messages)
 
-        print("Initial State Restored")
+        logger.debug("Initial State Restored")
 
     async def __close_socket(self) -> None:
         await self.__ha_socket.close()
         self.__connection_status = False
 
-        print("Web Socket Connection Closed")
+        logger.debug("Web Socket Connection Closed")
 
     def __send_ready_signal(self) -> None:
         self.__process_connection.send("ready")
@@ -202,11 +205,13 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
                 raise Exception("Websocket: Auth Invalid")
 
             asyncio.run_coroutine_threadsafe(
-                self.__fetch_light_states(), self.__loop
+                self.__fetch_light_states(),
+                self.__loop,
             ).result()
 
             threading.Thread(
-                target=self.__process_connection_listener, daemon=True
+                target=self.__process_connection_listener,
+                daemon=True,
             ).start()
 
             self.__send_ready_signal()
@@ -215,11 +220,18 @@ class HomeAssistantWebSocketProcess(multiprocessing.Process):
             pass
 
     def kill(self) -> None:
+        sleep(0.3)
         asyncio.run_coroutine_threadsafe(
-            self.__recover_initial_state(), self.__loop
+            self.__recover_initial_state(),
+            self.__loop,
         ).result()
-        asyncio.run_coroutine_threadsafe(self.__close_socket(), self.__loop).result()
+
+        sleep(0.3)
+        asyncio.run_coroutine_threadsafe(
+            self.__close_socket(),
+            self.__loop,
+        ).result()
 
         self.__loop.stop()
 
-        print("Web Socket Process Killed")
+        logger.debug("Web Socket Process Killed")
