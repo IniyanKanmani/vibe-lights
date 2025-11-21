@@ -85,11 +85,11 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
 
         logger.info(f"Lights: {self.__lights}")
 
-    async def __send_light_state(self, brightness: int, rgb_color: List[int]) -> None:
+    async def __send_light_state(self, br: int, r: int, g: int, b: int) -> None:
         data = {
             "entity_id": self.__lights,
-            "brightness": brightness,
-            "rgb_color": rgb_color,
+            "brightness": br,
+            "rgb_color": [r, g, b],
         }
 
         try:
@@ -107,13 +107,17 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
     def __push_states(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=1)
-                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
-
+                br, r, g, b = self.__process_queue.get(timeout=1)
                 self.__loop.call_soon_threadsafe(
                     asyncio.create_task,
-                    self.__send_light_state(br, cl),
+                    self.__send_light_state(br, r, g, b),
                 )
+
+                logger.debug(f"Br: {br}, R: {r}, G: {g}, B: {b}")
+
+                while self.__process_queue.qsize() > 0:
+                    self.__process_queue.get_nowait()
+
             except queue.Empty:
                 if self.__connection_status:
                     logger.debug("Queue Empty")

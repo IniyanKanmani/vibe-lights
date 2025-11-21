@@ -111,8 +111,11 @@ class LocalTuyaProcess(multiprocessing.Process):
         while True:
             try:
                 msg = q.get(timeout=1)
-
                 device.set_value(msg[0], msg[1], nowait=True)
+
+                while q.qsize() > 0:
+                    q.get_nowait()
+
             except queue.Empty:
                 if not self.__is_thread_kill_recieved:
                     continue
@@ -122,42 +125,36 @@ class LocalTuyaProcess(multiprocessing.Process):
     def __light_states_listener(self) -> None:
         while True:
             try:
-                br, cl = self.__process_queue.get(timeout=1)
-                self.__light_state_converter(br, cl)
+                br, r, g, b = self.__process_queue.get(timeout=1)
+                self.__light_state_converter(br, r, g, b)
 
-                logger.debug(f"Br: {br}, R: {cl[0]}, G: {cl[1]}, B: {cl[2]}")
+                logger.debug(f"Br: {br}, R: {r}, G: {g}, B: {b}")
+
+                while self.__process_queue.qsize() > 0:
+                    self.__process_queue.get_nowait()
+
             except queue.Empty:
                 if self.__connection_status:
                     logger.debug("Queue Empty")
                 else:
                     break
 
-    def __light_state_converter(self, brightness: int, rgb_color: List[int]) -> None:
+    def __light_state_converter(self, br: int, r: int, g: int, b: int) -> None:
         # Order: transition, r, g, b, colortemp, brightness
         # Hex Format: 011112222333344445555
         hex = ""
         hex += "%x" % 0
-        hex += BulbDevice.rgb_to_hexvalue(
-            rgb_color[0],
-            rgb_color[1],
-            rgb_color[2],
-            "hsv16",
-        )
+        hex += BulbDevice.rgb_to_hexvalue(r, g, b, "hsv16")
         hex += "%04x" % 0
-        hex += "%04x" % int(1000 * (brightness / 255))
+        hex += "%04x" % int(1000 * (br / 255))
 
         for q in self.__light_state_queues:
             q.put_nowait(("27", hex))
 
     def __recover_light_state(self) -> None:
-        for i, device in enumerate(self.__light_devices):
-            if i != len(self.__light_devices) - 1:
-                nowait = True
-            else:
-                nowait = False
-
+        for device in self.__light_devices:
             data = self.__initial_light_states[device.id]
-            device.set_multiple_values(data, nowait=nowait)
+            device.set_multiple_values(data, nowait=False)
 
         logger.debug("Initial State Restored")
 

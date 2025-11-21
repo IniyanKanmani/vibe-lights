@@ -86,8 +86,6 @@ class AudioInputStreamManager:
         self.__callback = callback
         self.__finished_callback = finished_callback
 
-        self.__max_possible_amp = (blocksize // 2) * 1.0 * 0.5
-
         self.__beat_cooldown = 0
         self.__prev_magnitude = None
         self.__mag_history = deque(maxlen=10)
@@ -97,7 +95,6 @@ class AudioInputStreamManager:
         logger.info(f"Freqs Shape: {self.__freqs.shape}")
         logger.info(f"Freqs Interval: {self.__freqs[1]}")
         logger.info(f"Freqs Max: {self.__freqs[-1]}")
-        logger.info(f"Max Possible Amp: {self.__max_possible_amp}")
         logger.info(f"Bands Freqs: {self.__bands}")
         logger.info(
             f"Low Band: {self.__freqs[self.__bands["low"][0]]} {self.__freqs[self.__bands["low"][1]]}"
@@ -165,7 +162,7 @@ class AudioInputStreamManager:
         r = np.sqrt(np.average(np.power(low_bands, 2)))
         r = np.log(r + 1)
         r = ((r - low_min_log) / (low_max_log - low_min_log)) * 255
-        r = np.clip(r, 0, 255)
+        r = np.clip(np.uint8(r), 0, 255)
 
         # Calculate Green
         # mid_log = np.log(mid_bands + 1)
@@ -178,7 +175,7 @@ class AudioInputStreamManager:
         g = np.sqrt(np.average(np.power(mid_bands, 2)))
         g = np.log(g + 1)
         g = ((g - mid_min_log) / (mid_max_log - mid_min_log)) * 255
-        g = np.clip(g, 0, 255)
+        g = np.clip(np.uint8(g), 0, 255)
 
         # Calculate Blue
         # high_log = np.log(high_bands + 1)
@@ -191,7 +188,7 @@ class AudioInputStreamManager:
         b = np.sqrt(np.average(np.power(high_bands, 2)))
         b = np.log(b + 1)
         b = ((b - high_min_log) / (high_max_log - high_min_log)) * 255
-        b = np.clip(b, 0, 255)
+        b = np.clip(np.uint8(b), 0, 255)
 
         # Calculate Brightness
         if beat_detected:
@@ -205,10 +202,10 @@ class AudioInputStreamManager:
             br = np.sqrt(np.average(np.power(br_mag, 2)))
             br = np.log(br + 1)
             br = ((br - mag_min_log) / (mag_max_log - mag_min_log)) * 255
-            br = np.clip(br, 0, 255)
+            br = np.clip(np.uint8(br), 0, 255)
 
         if self.__callback:
-            self.__callback(int(br), [int(r), int(g), int(b)])
+            self.__callback((br, r, g, b))
 
     def __finish_processing(self) -> None:
         if self.__finished_callback:

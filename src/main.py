@@ -3,7 +3,7 @@ import os
 import signal
 import sys
 from time import sleep
-from typing import List
+from typing import Tuple
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -40,8 +40,8 @@ def main() -> None:
     else:
         raise ValueError("Invalid Backend")
 
-    def callback(br: int, rgb_color: List[int]) -> None:
-        process_queue.put_nowait((br, rgb_color))
+    def callback(light: Tuple[int, int, int, int]) -> None:
+        process_queue.put_nowait(light)
 
     def finished_callback() -> None:
         server_con.send("kill")
