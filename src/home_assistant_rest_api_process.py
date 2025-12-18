@@ -1,3 +1,10 @@
+"""
+Home Assistant REST API backend process for controlling smart lights.
+
+This module provides a multiprocessing-based backend that communicates with
+Home Assistant via its REST API to control smart lights based on audio input.
+"""
+
 import asyncio
 import multiprocessing
 import os
@@ -12,9 +19,25 @@ from loguru import logger
 
 
 class HomeAssistantRestAPIProcess(multiprocessing.Process):
+    """
+    Process for controlling Home Assistant lights via REST API.
+
+    This class runs as a separate process and handles communication with
+    Home Assistant's REST API to control smart lights. It maintains the
+    initial state of lights and restores them when the process terminates.
+    """
+
     def __init__(
         self, process_connection: Connection, process_queue: multiprocessing.Queue
     ) -> None:
+        """
+        Initialize the Home Assistant REST API process.
+
+        Args:
+            process_connection (Connection): Pipe connection for receiving control signals.
+            process_queue (multiprocessing.Queue): Queue for receiving light
+                state updates as tuples of (brightness, r, g, b).
+        """
         super().__init__()
 
         logger.debug("Connection Backend: RestAPI")
@@ -22,23 +45,32 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         self.__process_connection = process_connection
         self.__process_queue = process_queue
 
-        self.__base_url = f"http://{os.getenv("HOMEASSISTANT_SERVER_IP")}:{os.getenv("HOMEASSISTANT_SERVER_PORT")}/api"
+        self.__base_url = f"http://{os.getenv('HOMEASSISTANT_SERVER_IP')}:{os.getenv('HOMEASSISTANT_SERVER_PORT')}/api"
         self.__headers = {
-            "Authorization": f"Bearer {os.getenv("HOMEASSISTANT_API_KEY")}",
+            "Authorization": f"Bearer {os.getenv('HOMEASSISTANT_API_KEY')}",
             "content-type": "application/json",
         }
 
         self.__connection_status = False
 
     def __initialize_loop(self) -> None:
+        """
+        Initialize the asyncio event loop in a separate thread.
+        """
         self.__loop = asyncio.new_event_loop()
         threading.Thread(target=self.__loop_runner, daemon=True).start()
 
     def __loop_runner(self) -> None:
+        """
+        Run the asyncio event loop forever.
+        """
         asyncio.set_event_loop(self.__loop)
         self.__loop.run_forever()
 
     def __connect(self) -> None:
+        """
+        Establish connection to Home Assistant REST API.
+        """
         self.__client_session = httpx.AsyncClient(
             base_url=self.__base_url,
             headers=self.__headers,
@@ -47,6 +79,12 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         self.__connection_status = True
 
     def __store_initial_light_states(self, states: List[dict]) -> None:
+        """
+        Store the initial state of all lights for later restoration.
+
+        Args:
+            states (List[dict]): List of light state dictionaries from Home Assistant.
+        """
         initial_light_states = {}
 
         for state in states:
@@ -75,6 +113,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         self.__initial_light_states = initial_light_states
 
     async def __fetch_light_states(self) -> None:
+        """
+        Fetch current light states from Home Assistant.
+        """
         response = await self.__client_session.get(url="/states")
         states = response.json()
 
@@ -86,6 +127,15 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         logger.info(f"Lights: {self.__lights}")
 
     async def __send_light_state(self, br: int, r: int, g: int, b: int) -> None:
+        """
+        Send light state update to Home Assistant.
+
+        Args:
+            br (int): Brightness value (0-255).
+            r (int): Red color value (0-255).
+            g (int): Green color value (0-255).
+            b (int): Blue color value (0-255).
+        """
         data = {
             "entity_id": self.__lights,
             "brightness": br,
@@ -105,6 +155,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             logger.debug("RemoteProtocolError")
 
     def __push_states(self) -> None:
+        """
+        Continuously push light states from queue to Home Assistant.
+        """
         while True:
             try:
                 br, r, g, b = self.__process_queue.get(timeout=1)
@@ -125,6 +178,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
                     break
 
     async def __recover_light_state(self) -> None:
+        """
+        Restore all lights to their initial states.
+        """
         messages = []
 
         for light, state in self.__initial_light_states.items():
@@ -164,15 +220,24 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         logger.debug("Initial State Restored")
 
     async def __close_connection(self) -> None:
+        """
+        Close the HTTP client session.
+        """
         await self.__client_session.aclose()
         self.__connection_status = False
 
         logger.debug("Rest API Connection Closed")
 
     def __send_ready_signal(self) -> None:
+        """
+        Send ready signal to the main process.
+        """
         self.__process_connection.send("ready")
 
     def __process_connection_listener(self):
+        """
+        Listen for control signals from the main process.
+        """
         while True:
             message = self.__process_connection.recv()
 
@@ -183,6 +248,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
         self.close()
 
     def run(self) -> None:
+        """
+        Main process execution loop.
+        """
         try:
             self.__initialize_loop()
             self.__connect()
@@ -202,6 +270,9 @@ class HomeAssistantRestAPIProcess(multiprocessing.Process):
             pass
 
     def kill(self) -> None:
+        """
+        Kill the process and restore initial light states.
+        """
         sleep(0.3)
         asyncio.run_coroutine_threadsafe(
             self.__recover_light_state(),

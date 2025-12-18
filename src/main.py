@@ -1,3 +1,13 @@
+"""
+Main entry point for the Vibe Lights application.
+
+This module initializes the audio input stream and backend processes
+to synchronize smart lights with music. Supports multiple backends:
+- Home Assistant REST API
+- Home Assistant WebSocket
+- Local Tuya
+"""
+
 import multiprocessing
 import os
 import signal
@@ -15,6 +25,9 @@ from local_tuya_process import LocalTuyaProcess
 
 
 def main() -> None:
+    """
+    Initialize and run the Vibe Lights application.
+    """
     load_dotenv()
 
     logger.remove(0)
@@ -41,9 +54,19 @@ def main() -> None:
         raise ValueError("Invalid Backend")
 
     def callback(light: Tuple[int, int, int, int]) -> None:
+        """
+        Callback function for audio processing results.
+
+        Args:
+            light (Tuple[int, int, int, int]): Tuple containing
+                (brightness, red, green, blue) values (0-255 each).
+        """
         process_queue.put_nowait(light)
 
     def finished_callback() -> None:
+        """
+        Callback function for audio stream completion.
+        """
         server_con.send("kill")
 
     audio_manager.initialize_stream()
@@ -65,7 +88,21 @@ def main() -> None:
 def setup_cleanup(
     audio_manager: AudioInputStreamManager,
 ) -> None:
+    """
+    Set up signal handlers for graceful application shutdown.
+
+    Args:
+        audio_manager (AudioInputStreamManager): The audio manager instance
+            to clean up on shutdown.
+    """
+
     def cleanup_handler(*_) -> None:
+        """
+        Handle SIGINT signal by closing the audio stream.
+
+        Args:
+            *_: Ignored signal handler arguments.
+        """
         if audio_manager and audio_manager.is_stream_alive():
             audio_manager.close_stream()
 

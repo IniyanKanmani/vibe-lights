@@ -1,3 +1,11 @@
+"""
+Audio input stream manager for capturing and processing audio data.
+
+This module provides functionality to capture audio from input devices,
+perform FFT analysis to extract frequency information, detect beats,
+and calculate RGB color values based on audio frequency bands.
+"""
+
 import json
 from collections import deque
 from typing import Callable, Tuple
@@ -8,7 +16,23 @@ from loguru import logger
 
 
 class AudioInputStreamManager:
+    """
+    Manages audio input stream capture and processing for light synchronization.
+
+    This class handles audio device selection, stream initialization, real-time
+    audio processing using FFT, beat detection, and RGB color calculation based
+    on frequency band analysis.
+    """
+
     def initialize_stream(self) -> None:
+        """
+        Initialize the audio input stream by querying and selecting a device.
+
+        Raises:
+            Exception: If an invalid device index is provided.
+            Exception: If the selected device has no input channels available.
+            Exception: If an invalid number of channels is specified.
+        """
         device_list = sd.query_devices()
         logger.info(f"\n{device_list}")
 
@@ -59,6 +83,17 @@ class AudioInputStreamManager:
         callback: Callable | None = None,
         finished_callback: Callable | None = None,
     ) -> None:
+        """
+        Build and configure the audio input stream with processing parameters.
+
+        Args:
+            latency (float): Latency in milliseconds for the audio stream.
+                Defaults to 100.
+            callback (Callable | None): Callback function to receive processed
+                light data as a tuple (brightness, r, g, b). Defaults to None.
+            finished_callback (Callable | None): Callback function called when
+                the stream finishes. Defaults to None.
+        """
         blocksize = int((latency * self.__samplerate) / 1000)
 
         self.__input_stream = sd.InputStream(
@@ -97,27 +132,48 @@ class AudioInputStreamManager:
         logger.info(f"Freqs Max: {self.__freqs[-1]}")
         logger.info(f"Bands Freqs: {self.__bands}")
         logger.info(
-            f"Low Band: {self.__freqs[self.__bands["low"][0]]} {self.__freqs[self.__bands["low"][1]]}"
+            f"Low Band: {self.__freqs[self.__bands['low'][0]]} {self.__freqs[self.__bands['low'][1]]}"
         )
         logger.info(
-            f"Mid Band: {self.__freqs[self.__bands["mid"][0]]} {self.__freqs[self.__bands["mid"][1]]}"
+            f"Mid Band: {self.__freqs[self.__bands['mid'][0]]} {self.__freqs[self.__bands['mid'][1]]}"
         )
         logger.info(
-            f"High Band: {self.__freqs[self.__bands["high"][0]]} {self.__freqs[self.__bands["high"][1]]}"
+            f"High Band: {self.__freqs[self.__bands['high'][0]]} {self.__freqs[self.__bands['high'][1]]}"
         )
         print()
 
     def start_stream(self) -> None:
+        """
+        Start the audio input stream.
+        """
         print()
         self.__input_stream.start()
 
     def __find_lower_and_upper_freqs(self, ll: int, hl: int) -> Tuple[int, int]:
+        """
+        Find the lower and upper frequency indices for a given frequency range.
+
+        Args:
+            ll (int): Lower frequency limit in Hz.
+            hl (int): Upper frequency limit in Hz.
+
+        Returns:
+            Tuple[int, int]: Tuple containing (lower_index, upper_index).
+        """
         li = list(map(lambda x: x > ll, self.__freqs)).index(True)
         ri = list(map(lambda x: x < hl, self.__freqs)).index(False)
 
         return li, ri
 
     def __process_audio(self, indata: np.ndarray, frames: int, *_) -> None:
+        """
+        Process incoming audio data using FFT and calculate RGB values.
+
+        Args:
+            indata (np.ndarray): Input audio data array.
+            frames (int): Number of frames in the input data.
+            *_: Additional unused callback arguments.
+        """
         window = np.hanning(frames)[:, None]
         magnitude = np.abs(np.fft.rfft(indata * window, axis=0))
 
@@ -208,15 +264,27 @@ class AudioInputStreamManager:
             self.__callback((br, r, g, b))
 
     def __finish_processing(self) -> None:
+        """
+        Handle the audio stream finish event.
+        """
         if self.__finished_callback:
             self.__finished_callback()
 
         logger.debug("Input Stream Finished")
 
     def is_stream_alive(self) -> bool:
+        """
+        Check if the audio input stream is currently active.
+
+        Returns:
+            bool: True if the stream is active, False otherwise.
+        """
         return self.__input_stream.active
 
     def close_stream(self) -> None:
+        """
+        Close the audio input stream.
+        """
         self.__input_stream.close()
 
         logger.debug("Input Stream Closed")
